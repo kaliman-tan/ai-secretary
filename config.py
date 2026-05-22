@@ -1,0 +1,34 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DISCORD_BOT_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
+DISCORD_GUILD_ID = int(os.environ["DISCORD_GUILD_ID"])
+DISCORD_EMAIL_CHANNEL_ID = int(os.environ["DISCORD_EMAIL_CHANNEL_ID"])
+DISCORD_REPORT_CHANNEL_ID = int(os.environ["DISCORD_REPORT_CHANNEL_ID"])
+DISCORD_TODO_CHANNEL_ID = int(os.environ["DISCORD_TODO_CHANNEL_ID"])
+
+ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5")
+
+GOOGLE_CREDENTIALS_PATH = os.getenv("GOOGLE_CREDENTIALS_PATH", "credentials/google_credentials.json")
+GOOGLE_TOKEN_PATH = os.getenv("GOOGLE_TOKEN_PATH", "credentials/google_token.json")
+
+NOTION_API_KEY = os.environ["NOTION_API_KEY"]
+NOTION_CALENDAR_DATABASE_ID = os.environ["NOTION_CALENDAR_DATABASE_ID"]
+
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+
+TIMEZONE = os.getenv("TIMEZONE", "Asia/Tokyo")
+DAILY_REPORT_HOUR = int(os.getenv("DAILY_REPORT_HOUR", "0"))
+DAILY_REPORT_MINUTE = int(os.getenv("DAILY_REPORT_MINUTE", "0"))
+EMAIL_CHECK_INTERVAL_MINUTES = int(os.getenv("EMAIL_CHECK_INTERVAL_MINUTES", "15"))
+
+GMAIL_JOB_LABEL = os.getenv("GMAIL_JOB_LABEL", "就活")
+
+ANTHROPIC_CURRENT_CREDITS = float(os.getenv("ANTHROPIC_CURRENT_CREDITS", "0.00"))
+ANTHROPIC_MONTHLY_USED = float(os.getenv("ANTHROPIC_MONTHLY_USED", "0.00"))
+ANTHROPIC_DAILY_AVG = float(os.getenv("ANTHROPIC_DAILY_AVG", "0.10"))
+DISCORD_CREDIT_CHANNEL_ID = int(os.getenv("DISCORD_CREDIT_CHANNEL_ID", "0"))
