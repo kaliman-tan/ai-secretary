@@ -4,6 +4,60 @@
 
 Discord 上で動く個人用 AI 秘書 Bot。Claude の Tool Use を使って自然言語でToDo・カレンダー・メールを操作する。
 
+## 実行環境
+
+**Bot は Mac ではなく Windows PC（WSL2）で稼働している。**
+
+| 項目 | 値 |
+|---|---|
+| 実行環境 | Windows PC の WSL2（Ubuntu 26.04） |
+| SSH 接続 | `ssh kaliman@100.114.106.16` |
+| WSL2 のユーザー | `kaliman` |
+| プロジェクトパス（WSL2） | `/home/kaliman/ai-secretary/` |
+| Python 仮想環境 | `/home/kaliman/ai-secretary/.venv/bin/python` |
+| systemd サービス名 | `ai-secretary` |
+| ログファイル（WSL2） | `/home/kaliman/ai-secretary/ai_secretary.log` |
+
+### よく使うコマンド（WSL2 SSH 後に実行）
+
+```bash
+# サービス状態確認
+sudo systemctl status ai-secretary
+
+# 再起動
+sudo systemctl restart ai-secretary
+
+# ログ確認（リアルタイム）
+sudo journalctl -u ai-secretary -f
+
+# ログ確認（直近30行）
+sudo journalctl -u ai-secretary -n 30 --no-pager
+
+# ログファイル直接確認
+tail -30 /home/kaliman/ai-secretary/ai_secretary.log
+
+# コード更新 → 反映
+cd ~/ai-secretary && git pull && sudo systemctl restart ai-secretary
+```
+
+### Mac 側でコードを変更したあとの手順
+
+1. Mac で `git push`
+2. WSL2 で `git pull && sudo systemctl restart ai-secretary`
+3. `.env` の変更は git 管理外なので **WSL2 の `.env` を手動で同期すること**
+
+### Discord チャンネル構成
+
+| チャンネル名 | 用途 | channel ID |
+|---|---|---|
+| `claude-hisyo` | メイン会話チャンネル | `1505938374639485128` |
+| 就活メール通知 | メールバッチ通知・ToDo 候補提示 | `1505938272231096531` |
+| 日次レポート | 毎朝7時のレポート送信先 | `1505938308386259135` |
+| ToDo | ToDo 一覧表示 | `1505938339759653084` |
+| クレジット確認 | Anthropic 残高アラート | `1506198964230164520` |
+
+`config.py` の `DISCORD_ALLOWED_CHANNEL_IDS` に含まれていないチャンネルはメッセージを**無視する**（ログにも残らない）。
+
 ## アーキテクチャ
 
 ```
