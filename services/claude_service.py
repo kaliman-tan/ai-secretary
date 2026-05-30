@@ -383,6 +383,21 @@ async def chat_with_tools(
     def _has_type(content: list, type_name: str) -> bool:
         return any(isinstance(b, dict) and b.get("type") == type_name for b in content)
 
+    def _tool_use_ids(content: list) -> set:
+        return {b["id"] for b in content if isinstance(b, dict) and b.get("type") == "tool_use"}
+
+    def _tool_result_ids(content: list) -> set:
+        return {b.get("tool_use_id") for b in content if isinstance(b, dict) and b.get("type") == "tool_result"}
+
+    def _pair_is_valid(assistant_msg: dict, user_msg: dict | None) -> bool:
+        if user_msg is None:
+            return False
+        if not isinstance(user_msg.get("content"), list):
+            return False
+        if not _has_type(user_msg["content"], "tool_result"):
+            return False
+        return _tool_use_ids(assistant_msg["content"]).issubset(_tool_result_ids(user_msg["content"]))
+
     # API送信直前に孤立したtool_useを除去する最終防衛
     raw = list(conversation_history)
     cleaned: list[dict] = []
@@ -393,12 +408,15 @@ async def chat_with_tools(
                 and isinstance(m.get("content"), list)
                 and _has_type(m["content"], "tool_use")):
             nxt = raw[j + 1] if j + 1 < len(raw) else None
-            if nxt is not None and isinstance(nxt.get("content"), list) and _has_type(nxt["content"], "tool_result"):
+            if _pair_is_valid(m, nxt):
                 cleaned.append(m)
                 cleaned.append(nxt)
                 j += 2
             else:
+                # Drop incomplete pair (skip assistant; skip user if it has tool_result)
                 j += 1
+                if nxt is not None and isinstance(nxt.get("content"), list) and _has_type(nxt["content"], "tool_result"):
+                    j += 1
         else:
             cleaned.append(m)
             j += 1
@@ -431,12 +449,18 @@ async def chat_with_tools(
 
     for block in response.content:
         if block.type == "tool_use":
+            # Only include this specific tool_use block so the saved assistant_content
+            # exactly matches the single tool_result we will store next.
+            single_content = [
+                b for b in assistant_content
+                if b.get("type") != "tool_use" or b.get("id") == block.id
+            ]
             return {
                 "type": "tool_use",
                 "name": block.name,
                 "input": block.input,
                 "tool_use_id": block.id,
-                "assistant_content": assistant_content,
+                "assistant_content": single_content,
             }
 
     text = next((b.text for b in response.content if hasattr(b, "text")), "")
@@ -556,8 +580,11 @@ async def generate_daily_report(
     calendar_events: list[dict],
     discord_summary: str,
 ) -> str:
+    now_jst = datetime.now(ZoneInfo("Asia/Tokyo"))
+    today_str = f"{now_jst.strftime('%Y年%m月%d日')}（{_WEEKDAYS[now_jst.weekday()]}曜日）"
+
     emails_text = "\n".join(
-        f"- [{e.get('importance', '?')}] {e.get('sender', '')} / {e.get('subject', '')} — {e.get('summary', '')}"
+        f"- [{e.get('importance', '?')}] {e.get('sender', '')} / {e.get('subject', '')} — {e.get('summary', '')} （処理日: {e.get('created_at', '')[:10]}）"
         for e in emails
     ) or "なし"
 
@@ -572,6 +599,8 @@ async def generate_daily_report(
     ) or "なし"
 
     prompt = f"""以下の情報をもとに、本日の日次レポートを日本語で作成してください。
+
+今日の日付（JST）: {today_str}
 
 ## 重要メール（直近）
 {emails_text}
@@ -594,7 +623,8 @@ async def generate_daily_report(
 
 ## 出力ルール
 - タイトル行（日付・「日次レポート」などの見出し）は出力しないこと。本文のみ出力する。
-- Discordに貼れるMarkdown形式で出力してください。"""
+- Discordに貼れるMarkdown形式で出力してください。
+- メール要約中の「明日」「今日」などの相対日付は処理日時点の表現。今日の日付を基準に**すでに過ぎた締切は報告しない**。今後の予定・締切のみ要注意として挙げること。"""
 
     response = await _create_with_retry(
         model=CLAUDE_MODEL,
@@ -681,7 +711,7 @@ JSON配列で返してください（他のテキスト不要）:
 
 
 async def extract_email_todos(subject: str, sender: str, body: str, score: int) -> list[dict]:
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y-%m-%d")
     prompt = f"""以下の就活メールから、アクションが必要な項目を抽出してください。
 
 今日の日付: {today}
