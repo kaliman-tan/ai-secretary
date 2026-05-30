@@ -21,13 +21,6 @@ def setup(bot: discord.Client) -> AsyncIOScheduler:
         id="job_email_batch",
     )
 
-    # Supabase → Notion ToDo同期（深夜0時）
-    scheduler.add_job(
-        _run_notion_todo_sync,
-        CronTrigger(hour=0, minute=0, timezone=tz),
-        id="notion_todo_sync",
-    )
-
     # 日次レポート（毎朝）— misfire_grace_time で起動遅延でも確実実行
     scheduler.add_job(
         _run_daily_report,
@@ -52,30 +45,6 @@ def setup(bot: discord.Client) -> AsyncIOScheduler:
 
 async def _run_job_email_batch(bot: discord.Client) -> None:
     await job_email_handler.run_batch(bot)
-
-
-async def _run_notion_todo_sync() -> None:
-    import asyncio
-    from services import supabase_service, notion_service
-
-    todos = await asyncio.to_thread(supabase_service.get_unsynced_todos)
-    if not todos:
-        return
-
-    synced_ids = []
-    for todo in todos:
-        try:
-            await asyncio.to_thread(
-                notion_service.sync_todo,
-                todo["title"],
-                todo.get("due_date"),
-            )
-            synced_ids.append(todo["id"])
-        except Exception:
-            pass
-
-    if synced_ids:
-        await asyncio.to_thread(supabase_service.mark_todos_synced, synced_ids)
 
 
 async def _run_daily_report(bot: discord.Client) -> None:

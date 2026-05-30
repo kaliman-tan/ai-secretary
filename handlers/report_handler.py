@@ -5,10 +5,11 @@ import os
 import tempfile
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from services import claude_service, supabase_service, calendar_service, notion_service
+from services import claude_service, supabase_service, calendar_service, notion_service, google_tasks_service
 from config import DISCORD_REPORT_CHANNEL_ID, TIMEZONE, ANTHROPIC_CURRENT_CREDITS, ANTHROPIC_MONTHLY_USED, ANTHROPIC_DAILY_AVG
 
 _SENT_DATE_FILE = os.path.join(tempfile.gettempdir(), "ai_secretary_report_sent.txt")
+_send_lock = asyncio.Lock()
 logger = logging.getLogger(__name__)
 _WEEKDAY_JA = ["月", "火", "水", "木", "金", "土", "日"]
 
@@ -45,6 +46,14 @@ async def _fetch_notion_events() -> list[dict]:
 
 
 async def generate_and_post(bot: discord.Client, discord_summary: str = "") -> None:
+    async with _send_lock:
+        if is_sent_today():
+            logger.info("[report] 本日の日次レポートは送信済みのためスキップ")
+            return
+        await _generate_and_post_inner(bot, discord_summary)
+
+
+async def _generate_and_post_inner(bot: discord.Client, discord_summary: str = "") -> None:
     channel = bot.get_channel(DISCORD_REPORT_CHANNEL_ID)
     if channel is None:
         return
@@ -57,7 +66,7 @@ async def generate_and_post(bot: discord.Client, discord_summary: str = "") -> N
     # データを並列取得
     emails, todos, gcal_events, notion_events = await asyncio.gather(
         asyncio.to_thread(supabase_service.get_recent_email_logs, 10),
-        asyncio.to_thread(supabase_service.get_todos),
+        asyncio.to_thread(google_tasks_service.get_tasks),
         _fetch_gcal_events(),
         _fetch_notion_events(),
     )

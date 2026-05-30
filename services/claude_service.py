@@ -19,7 +19,7 @@ TOOLS = [
     {
         "name": "add_todo",
         "description": (
-            "ToDoタスクを新規追加する。"
+            "ToDoタスクを新規追加する。Google Tasks に登録される。"
             "ユーザーが「〜を追加して」「〜やらなきゃ」「〜をリストに入れて」と言ったときに使う。"
             "単に完了報告や雑談をしているだけのときは使わない。"
         ),
@@ -30,8 +30,16 @@ TOOLS = [
                 "due_iso": {
                     "type": "string",
                     "description": (
-                        "期限の ISO8601形式 JST（例: 2026-05-22T17:00:00+09:00）。"
+                        "締め切り日時の ISO8601形式 JST（例: 2026-05-22T17:00:00+09:00）。"
                         "期限がなければ省略。"
+                    ),
+                },
+                "scheduled_iso": {
+                    "type": "string",
+                    "description": (
+                        "いつやるか（実施予定日時）の ISO8601形式 JST（例: 2026-05-22T15:00:00+09:00）。"
+                        "「〇日にやる」「〇時にやろうと思う」と言われたときに設定する。"
+                        "Googleカレンダーに予定として自動登録される。期限（due_iso）とは別の概念。"
                     ),
                 },
             },
@@ -589,7 +597,7 @@ async def generate_daily_report(
     ) or "なし"
 
     todos_text = "\n".join(
-        f"- {'✅' if t['done'] else '⬜'} {t['title']}"
+        f"- {'✅' if t.get('done') else '⬜'} {t['title']}{(' (' + t['due'][:10] + ')') if t.get('due') else ''}"
         for t in todos
     ) or "なし"
 

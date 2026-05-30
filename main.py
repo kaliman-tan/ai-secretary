@@ -4,7 +4,7 @@ import discord
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from discord.ext import commands
-from config import DISCORD_BOT_TOKEN, DISCORD_GUILD_ID, DAILY_REPORT_HOUR, DAILY_REPORT_MINUTE, TIMEZONE
+from config import DISCORD_BOT_TOKEN, DISCORD_GUILD_ID, DISCORD_ALLOWED_CHANNEL_IDS, DAILY_REPORT_HOUR, DAILY_REPORT_MINUTE, TIMEZONE
 from handlers import message_handler
 from schedulers import scheduler as scheduler_module
 
@@ -59,6 +59,8 @@ async def on_message(message: discord.Message):
     if message.author == bot.user:
         return
     if message.guild and message.guild.id != DISCORD_GUILD_ID:
+        return
+    if message.channel.id not in DISCORD_ALLOWED_CHANNEL_IDS:
         return
 
     await message_handler.handle(message, bot)

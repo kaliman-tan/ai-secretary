@@ -4,7 +4,7 @@ import logging
 import anthropic
 from datetime import datetime, timedelta, date as date_t
 from zoneinfo import ZoneInfo
-from services import claude_service, supabase_service, calendar_service, notion_service
+from services import claude_service, supabase_service, calendar_service, notion_service, google_tasks_service
 from handlers import todo_handler
 from config import TIMEZONE
 
@@ -57,9 +57,15 @@ def _push_history(channel_id: int, role: str, content: str) -> None:
 
 
 def _sanitize_history(messages: list[dict]) -> list[dict]:
-    """tool_useに対応するtool_resultが存在しない不正なペアを除去する。"""
+    """tool_useに対応するtool_resultが存在しない・不完全なペアを除去する。"""
     def _has_type(content: list, type_name: str) -> bool:
         return any(isinstance(b, dict) and b.get("type") == type_name for b in content)
+
+    def _tool_use_ids(content: list) -> set:
+        return {b["id"] for b in content if isinstance(b, dict) and b.get("type") == "tool_use"}
+
+    def _tool_result_ids(content: list) -> set:
+        return {b.get("tool_use_id") for b in content if isinstance(b, dict) and b.get("type") == "tool_result"}
 
     result = []
     i = 0
@@ -69,14 +75,21 @@ def _sanitize_history(messages: list[dict]) -> list[dict]:
                 and isinstance(msg.get("content"), list)
                 and _has_type(msg["content"], "tool_use")):
             next_msg = messages[i + 1] if i + 1 < len(messages) else None
-            if (next_msg is not None
-                    and isinstance(next_msg.get("content"), list)
-                    and _has_type(next_msg["content"], "tool_result")):
+            has_result = (
+                next_msg is not None
+                and isinstance(next_msg.get("content"), list)
+                and _has_type(next_msg["content"], "tool_result")
+            )
+            all_matched = has_result and _tool_use_ids(msg["content"]).issubset(
+                _tool_result_ids(next_msg["content"])
+            )
+            if all_matched:
                 result.append(msg)
                 result.append(next_msg)
                 i += 2
             else:
-                i += 1  # 対応するtool_resultがない → スキップ
+                # 不完全なペアごとスキップ
+                i += 2 if has_result else 1
         else:
             result.append(msg)
             i += 1
@@ -177,9 +190,25 @@ async def _dispatch_tool(
     """ツールを実行し、次ターンの文脈として使える簡潔なサマリー文字列を返す。"""
 
     if name == "add_todo":
-        deadline_dt = _parse_iso(inputs.get("due_iso"))
-        await todo_handler.handle_add(channel, inputs["title"], deadline_dt)
-        suffix = f"（期限: {inputs['due_iso']}）" if inputs.get("due_iso") else ""
+        due_dt = _parse_iso(inputs.get("due_iso"))
+        scheduled_dt = _parse_iso(inputs.get("scheduled_iso"))
+        await todo_handler.handle_add(channel, inputs["title"], due_dt, scheduled_dt)
+
+        # いつやるか が指定されていたらカレンダーにも登録
+        if scheduled_dt:
+            try:
+                end_dt = scheduled_dt + timedelta(hours=1)
+                await asyncio.to_thread(
+                    calendar_service.create_event,
+                    f"📋 {inputs['title']}",
+                    scheduled_dt,
+                    end_dt,
+                    "ToDoより自動登録",
+                )
+            except Exception as e:
+                logger.warning(f"[add_todo] カレンダー登録失敗: {e}")
+
+        suffix = f"（予定: {inputs['scheduled_iso']}）" if scheduled_dt else (f"（期限: {inputs['due_iso']}）" if due_dt else "")
         return f"ToDoを追加した: 「{inputs['title']}」{suffix}"
 
     elif name == "complete_todo":
@@ -198,14 +227,14 @@ async def _dispatch_tool(
 
     elif name == "list_todos":
         user_question = inputs.get("user_question")
-        todos = await asyncio.to_thread(supabase_service.get_todos, False)
+        todos = await asyncio.to_thread(google_tasks_service.get_tasks)
         if todos:
             lines = ["**📋 ToDoリスト（未完了）**\n"]
             for t in todos:
-                mark = {"high": "🔴", "normal": "🟡", "low": "🟢"}.get(t.get("priority", "normal"), "")
-                lines.append(f"⬜ {mark} `{t['id']}` {t['title']}")
+                due_str = todo_handler._fmt_due(t.get("due"))
+                lines.append(f"⬜ {t['title']}{due_str}")
             await channel.send("\n".join(lines))
-            items = ", ".join(f"{i+1}. {t['title']}（ID:{t['id']}）" for i, t in enumerate(todos))
+            items = ", ".join(f"{i+1}. {t['title']}" for i, t in enumerate(todos))
             summary = f"ToDoリストを表示した（{len(todos)}件）: {items}"
             if user_question:
                 comment = await claude_service.chat(
