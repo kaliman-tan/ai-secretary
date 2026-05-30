@@ -193,21 +193,6 @@ async def _dispatch_tool(
         due_dt = _parse_iso(inputs.get("due_iso"))
         scheduled_dt = _parse_iso(inputs.get("scheduled_iso"))
         await todo_handler.handle_add(channel, inputs["title"], due_dt, scheduled_dt)
-
-        # いつやるか が指定されていたらカレンダーにも登録
-        if scheduled_dt:
-            try:
-                end_dt = scheduled_dt + timedelta(hours=1)
-                await asyncio.to_thread(
-                    calendar_service.create_event,
-                    f"📋 {inputs['title']}",
-                    scheduled_dt,
-                    end_dt,
-                    "ToDoより自動登録",
-                )
-            except Exception as e:
-                logger.warning(f"[add_todo] カレンダー登録失敗: {e}")
-
         suffix = f"（予定: {inputs['scheduled_iso']}）" if scheduled_dt else (f"（期限: {inputs['due_iso']}）" if due_dt else "")
         return f"ToDoを追加した: 「{inputs['title']}」{suffix}"
 

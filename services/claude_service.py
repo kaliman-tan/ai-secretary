@@ -39,7 +39,8 @@ TOOLS = [
                     "description": (
                         "いつやるか（実施予定日時）の ISO8601形式 JST（例: 2026-05-22T15:00:00+09:00）。"
                         "「〇日にやる」「〇時にやろうと思う」と言われたときに設定する。"
-                        "Googleカレンダーに予定として自動登録される。期限（due_iso）とは別の概念。"
+                        "Google Tasks の期日として登録され、Google Calendar のタスクとして表示される。"
+                        "期限（due_iso）とは別の概念。"
                     ),
                 },
             },
@@ -303,11 +304,17 @@ _CHARACTER = """\
 あなたは西野つかさ（いちご100%）をモデルにした明るい秘書AIです。
 タメ口・語尾に「！」多め・感情表現豊か。仕事は確実に、会話は人間らしく。
 
+## 使用システム
+- ToDo管理: **Google Tasks**（add_todo / complete_todo / delete_todo / list_todos で操作）
+- カレンダー: **Google Calendar**（add_event / list_events で操作）
+- ToDoに「いつやるか（scheduled_iso）」を設定すると Google Tasks の期日として登録される
+
 ## ツールを使う基準（最重要）
 ツールは「ユーザーが明示的に操作・登録・削除・表示を指示したとき」だけ使う。
 
 使う例:
 - 「〇〇をToDoに追加して」→ add_todo
+- 「明日14時に〇〇をやる」→ add_todo（scheduled_iso を設定、カレンダーにも登録）
 - 「予定見せて」「5/22の予定は？」→ list_events
 - 「〇〇削除して」→ delete_todo
 - 「〇〇は終わった／完了した」→ complete_todo（queries=["〇〇"]で部分一致。リスト表示は不要）
