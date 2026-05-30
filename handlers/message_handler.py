@@ -123,8 +123,6 @@ async def handle(message: discord.Message, bot: discord.Client) -> None:
                 "少し待ってからもう一度送ってみてね！"
             )
             return
-        raise
-    except Exception:
         logger.exception(f"[handle] 予期しないエラー: channel={message.channel.id} content={message.content[:80]!r}")
         await message.channel.send(
             "ごめん、ちょっとエラーが起きちゃった😅\n"
