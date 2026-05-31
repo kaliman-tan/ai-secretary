@@ -107,9 +107,11 @@ TOOLS = [
     {
         "name": "list_todos",
         "description": (
-            "未完了ToDoの一覧を表示する。"
-            "使うのは「ユーザーが一覧を見たいと明示したとき」か"
-            "「コメント・優先順位付けなどの分析を求めたとき」だけ。"
+            "未完了ToDoを取得する。結果はClaudeが解釈してユーザーに伝える。\n"
+            "使う場面:\n"
+            "- 「リストを見せて」「何がある？」など一覧表示\n"
+            "- 「〇〇って入ってる？」「〇〇のタスクはある？」など特定タスクの存在確認\n"
+            "- 「優先順位つけて」「今日どれをやる？」など分析・アドバイス\n"
             "\n"
             "【使ってはいけない場面】\n"
             "- complete_todoやdelete_todoを実行する前の「確認のため」→ 不要。部分一致で直接実行できる\n"
@@ -480,6 +482,25 @@ async def chat_with_tools(
 
     text = next((b.text for b in response.content if hasattr(b, "text")), "")
     return {"type": "text", "text": text.strip()}
+
+
+# ---------------------------------------------------------------------------
+# Post-tool reasoning — ツール結果を見てClaudeが最終応答を生成する
+# ---------------------------------------------------------------------------
+
+async def generate_final_response(history: list[dict]) -> str:
+    """ツール結果が積まれた会話履歴を受け取り、Claudeがテキスト応答を生成する。
+    toolsを渡さないことでClaudeはテキストのみで返答する。"""
+    response = await _create_with_retry(
+        model=CLAUDE_MODEL,
+        max_tokens=1024,
+        system=_system_block(_build_system_prompt()),
+        messages=history,
+    )
+    for block in response.content:
+        if hasattr(block, "text"):
+            return block.text.strip()
+    return ""
 
 
 # ---------------------------------------------------------------------------

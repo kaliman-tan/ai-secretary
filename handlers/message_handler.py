@@ -24,6 +24,9 @@ _pending_events: dict[int, dict] = {}
 # channel_id -> {task_id, title} : 実施日時の回答待ちタスク
 _pending_task_dates: dict[int, dict] = {}
 
+# ツール結果をClaudeに返して最終応答を生成するツール群
+_QUERY_TOOLS = {"list_todos", "list_events"}
+
 _CONFIRM_WORDS = {"ok", "はい", "いいよ", "うん", "よし", "お願い", "登録して", "確定", "yes", "おk", "おけ", "おっけ", "おっけー"}
 _CANCEL_WORDS = {"キャンセル", "やめ", "いや", "no", "取り消し", "やめて"}
 
@@ -173,8 +176,17 @@ async def _handle_inner(message: discord.Message, bot: discord.Client) -> None:
             "role": "user",
             "content": [{"type": "tool_result", "tool_use_id": result["tool_use_id"], "content": result_text}],
         })
-        # ロールを交互にするためのアシスタントサマリー（APIコールなし）
-        _push_history(channel_id, "assistant", result_text)
+        if result["name"] in _QUERY_TOOLS:
+            # クエリ系ツール: 結果をClaudeに渡して最終応答を生成
+            final_text = await claude_service.generate_final_response(_get_history(channel_id))
+            if final_text:
+                await channel.send(final_text)
+                _push_history(channel_id, "assistant", final_text)
+            else:
+                _push_history(channel_id, "assistant", result_text)
+        else:
+            # アクション系ツール: ツール内でDiscord送信済みなのでサマリーのみ記録
+            _push_history(channel_id, "assistant", result_text)
     else:
         _push_history(channel_id, "assistant", result["text"])
         await channel.send(result["text"])
@@ -219,26 +231,15 @@ async def _dispatch_tool(
         return f"ToDoを削除した: {labels}"
 
     elif name == "list_todos":
-        user_question = inputs.get("user_question")
         todos = await asyncio.to_thread(google_tasks_service.get_tasks)
         if todos:
-            lines = ["**📋 ToDoリスト（未完了）**\n"]
-            for t in todos:
-                due_str = todo_handler._fmt_due(t.get("due"))
-                lines.append(f"⬜ {t['title']}{due_str}")
-            await channel.send("\n".join(lines))
-            items = ", ".join(f"{i+1}. {t['title']}" for i, t in enumerate(todos))
-            summary = f"ToDoリストを表示した（{len(todos)}件）: {items}"
-            if user_question:
-                comment = await claude_service.chat(
-                    f"未完了ToDoは以下の通りです:\n{items}\n\n{user_question}",
-                )
-                await channel.send(comment)
-                summary += f" / コメント: {comment[:60]}"
-            return summary
+            items = "\n".join(
+                f"{i+1}. {t['title']}{(' (' + t['due'][:10] + ')') if t.get('due') else ''}"
+                for i, t in enumerate(todos)
+            )
+            return f"未完了ToDoリスト（{len(todos)}件）:\n{items}"
         else:
-            await channel.send("未完了のタスクはありません。")
-            return "ToDoリストを表示した（0件）"
+            return "未完了のタスクはありません。"
 
     elif name == "add_event":
         await _handle_add_event_with_confirm(channel, inputs)
@@ -248,7 +249,6 @@ async def _dispatch_tool(
         try:
             date_iso = inputs.get("date_iso")
             days = int(inputs.get("days") or 1)
-            user_question = inputs.get("user_question")
             start_date = date_t.fromisoformat(date_iso) if date_iso else None
 
             events = await asyncio.to_thread(
@@ -257,41 +257,25 @@ async def _dispatch_tool(
                 start_date=start_date,
             )
 
-            # ヘッダー文字列を文脈に合わせて生成
             if start_date and days == 1:
                 weekday = _WEEKDAY_NAMES[start_date.weekday()]
-                header = f"**📅 {start_date.month}/{start_date.day}({weekday})の予定**"
+                label = f"{start_date.month}/{start_date.day}（{weekday}）"
             elif days > 1:
-                header = f"**📅 今後{days}日の予定**"
+                label = f"今後{days}日"
             else:
-                header = "**📅 今日の予定**"
+                label = "今日"
 
             if events:
-                lines = [header]
-                for e in events:
-                    time_str = _fmt_event_time(e["start"], start_date)
-                    lines.append(f"- {time_str} **{e['title']}**")
-                await channel.send("\n".join(lines))
-                items = ", ".join(
-                    f"{_fmt_event_time(e['start'], start_date)} {e['title']}" for e in events[:5]
+                lines = "\n".join(
+                    f"- {_fmt_event_time(e['start'], start_date)} {e['title']}"
+                    for e in events
                 )
-                if user_question:
-                    events_text = "\n".join(
-                        f"{_fmt_event_time(e['start'], start_date)} {e['title']}" for e in events
-                    )
-                    comment = await claude_service.chat(
-                        f"予定一覧:\n{events_text}\n\n{user_question}",
-                    )
-                    await channel.send(comment)
-                    return f"カレンダー予定を表示してコメントした（{len(events)}件）: {items} / コメント: {comment[:60]}"
-                return f"カレンダー予定を表示した（{len(events)}件）: {items}"
+                return f"{label}の予定（{len(events)}件）:\n{lines}"
             else:
-                label = f"{start_date.month}/{start_date.day}" if start_date else "今日"
-                await channel.send(f"{label}の予定はないよ！")
-                return "カレンダー予定を表示した（0件）"
+                return f"{label}の予定はありません。"
         except Exception as e:
-            await channel.send(f"⚠️ カレンダー取得エラー: {e}")
-            return None
+            logger.error(f"[list_events] エラー: {e}")
+            return f"カレンダー取得エラー: {e}"
 
     elif name == "add_rule":
         await asyncio.to_thread(
