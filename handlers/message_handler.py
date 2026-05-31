@@ -21,6 +21,9 @@ _history_loaded: set[int] = set()  # Supabaseから読み込み済みのchannel_
 # channel_id -> {title, start_dt, end_dt} : 確認待ちイベント
 _pending_events: dict[int, dict] = {}
 
+# channel_id -> {task_id, title} : 実施日時の回答待ちタスク
+_pending_task_dates: dict[int, dict] = {}
+
 _CONFIRM_WORDS = {"ok", "はい", "いいよ", "うん", "よし", "お願い", "登録して", "確定", "yes", "おk", "おけ", "おっけ", "おっけー"}
 _CANCEL_WORDS = {"キャンセル", "やめ", "いや", "no", "取り消し", "やめて"}
 
@@ -146,6 +149,11 @@ async def _handle_inner(message: discord.Message, bot: discord.Client) -> None:
         await job_email_handler.handle_todo_confirmation(channel, content)
         return
 
+    # タスク実施日時の回答待ちがあれば処理
+    if channel_id in _pending_task_dates:
+        await _handle_task_date_response(channel, content)
+        return
+
     # 初回アクセス時にSupabaseから履歴を復元
     await _load_history_if_needed(channel_id)
 
@@ -190,7 +198,9 @@ async def _dispatch_tool(
     if name == "add_todo":
         due_dt = _parse_iso(inputs.get("due_iso"))
         scheduled_dt = _parse_iso(inputs.get("scheduled_iso"))
-        await todo_handler.handle_add(channel, inputs["title"], due_dt, scheduled_dt)
+        task = await todo_handler.handle_add(channel, inputs["title"], due_dt, scheduled_dt)
+        if not due_dt and not scheduled_dt and task:
+            _pending_task_dates[channel.id] = {"task_id": task["id"], "title": inputs["title"]}
         suffix = f"（予定: {inputs['scheduled_iso']}）" if scheduled_dt else (f"（期限: {inputs['due_iso']}）" if due_dt else "")
         return f"ToDoを追加した: 「{inputs['title']}」{suffix}"
 
@@ -374,6 +384,31 @@ async def _handle_event_confirmation(channel: discord.TextChannel, content: str)
         await channel.send(
             "うーん、うまく読み取れなかった…\n"
             "「OK」で確定、「キャンセル」でやめられるよ！"
+        )
+
+
+async def _handle_task_date_response(channel: discord.TextChannel, content: str) -> None:
+    pending = _pending_task_dates[channel.id]
+    skip_words = {"あとで", "まだ", "決めてない", "未定", "わからない", "skip", "なし", "パス", "後で"}
+    if any(w in content for w in skip_words):
+        del _pending_task_dates[channel.id]
+        await channel.send("わかった！日付なしで登録しておくね！")
+        return
+
+    now_jst = datetime.now(_TZ)
+    try:
+        dt = await claude_service.parse_datetime_natural(content, now_jst)
+        await asyncio.to_thread(google_tasks_service.update_task_due, pending["task_id"], dt.isoformat())
+        del _pending_task_dates[channel.id]
+        weekday = _WEEKDAY_NAMES[dt.weekday()]
+        await channel.send(
+            f"📅 「{pending['title']}」を {dt.month}/{dt.day}（{weekday}）{dt.strftime('%H:%M')} にやる予定で設定したよ！"
+        )
+    except Exception:
+        await channel.send(
+            "うーん、日時をうまく読み取れなかった…\n"
+            "「明日15時」「来週月曜の午前中」みたいに教えてくれると嬉しいな！\n"
+            "「あとで」と言えば日付なしのままにできるよ！"
         )
 
 

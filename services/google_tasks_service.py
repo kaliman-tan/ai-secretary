@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from zoneinfo import ZoneInfo
 from googleapiclient.discovery import build
 from services.gmail_service import _get_creds
@@ -28,7 +28,7 @@ def create_task(title: str, due_iso: str | None = None, notes: str | None = None
     body: dict = {"title": title, "status": "needsAction"}
     if due_iso:
         try:
-            dt = datetime.fromisoformat(due_iso).astimezone(timezone.utc)
+            dt = datetime.fromisoformat(due_iso).astimezone(_TZ)
             body["due"] = dt.strftime("%Y-%m-%dT00:00:00.000Z")
         except Exception:
             pass
@@ -36,6 +36,19 @@ def create_task(title: str, due_iso: str | None = None, notes: str | None = None
         body["notes"] = notes
     result = _service().tasks().insert(tasklist=_TASKLIST_ID, body=body).execute()
     return _parse_task(result)
+
+
+def update_task_due(task_id: str, due_iso: str) -> bool:
+    try:
+        dt = datetime.fromisoformat(due_iso).astimezone(_TZ)
+        _service().tasks().patch(
+            tasklist=_TASKLIST_ID,
+            task=task_id,
+            body={"due": dt.strftime("%Y-%m-%dT00:00:00.000Z")},
+        ).execute()
+        return True
+    except Exception:
+        return False
 
 
 def complete_task(task_id: str) -> bool:

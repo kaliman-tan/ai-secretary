@@ -42,6 +42,8 @@ async def handle_add(
     elif due_dt:
         weekday = _WEEKDAY_NAMES[due_dt.weekday()]
         msg += f"\n⏰ 期限：{due_dt.month}月{due_dt.day}日（{weekday}）{due_dt.strftime('%H:%M')}"
+    else:
+        msg += "\nいつやる予定？日時を教えてくれたら設定するね！「あとで」でスキップもできるよ！"
     await channel.send(msg)
     return task
 

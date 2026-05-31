@@ -84,9 +84,27 @@ async def _generate_and_post_inner(bot: discord.Client, discord_summary: str = "
 
     credit_section = _build_credit_section()
     header = f"# 📅 {today} 日次レポート\n\n"
-    await channel.send(header + report + "\n\n" + credit_section)
+    full_message = header + report + "\n\n" + credit_section
+    for chunk in _split_message(full_message):
+        await channel.send(chunk)
     _mark_sent()
     logger.info(f"[report] 日次レポート送信完了: {today}")
+
+
+def _split_message(text: str, limit: int = 2000) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+    chunks = []
+    while text:
+        if len(text) <= limit:
+            chunks.append(text)
+            break
+        split_at = text.rfind("\n", 0, limit)
+        if split_at == -1:
+            split_at = limit
+        chunks.append(text[:split_at])
+        text = text[split_at:].lstrip("\n")
+    return chunks
 
 
 def _build_credit_section() -> str:
