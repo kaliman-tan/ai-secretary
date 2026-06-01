@@ -69,10 +69,14 @@ async def on_message(message: discord.Message):
 
 @bot.command(name="report")
 async def manual_report(ctx):
-    """手動で日次レポートを生成"""
+    """手動で日次レポートを生成（送信済みでも強制再生成）"""
     await ctx.send("📊 レポート生成中...")
     from handlers import report_handler
-    await report_handler.generate_and_post(bot)
+    try:
+        await report_handler.generate_and_post(bot, force=True)
+    except Exception as e:
+        logger.exception(f"[report] 手動レポート生成エラー: {e}")
+        await ctx.send("⚠️ レポート生成中にエラーが発生したよ！ログを確認してね。")
 
 
 @bot.command(name="todo")

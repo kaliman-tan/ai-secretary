@@ -45,9 +45,9 @@ async def _fetch_notion_events() -> list[dict]:
         return []
 
 
-async def generate_and_post(bot: discord.Client, discord_summary: str = "") -> None:
+async def generate_and_post(bot: discord.Client, discord_summary: str = "", force: bool = False) -> None:
     async with _send_lock:
-        if is_sent_today():
+        if not force and is_sent_today():
             logger.info("[report] 本日の日次レポートは送信済みのためスキップ")
             return
         await _generate_and_post_inner(bot, discord_summary)
