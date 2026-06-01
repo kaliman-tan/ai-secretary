@@ -616,8 +616,15 @@ async def generate_daily_report(
     calendar_events: list[dict],
     discord_summary: str,
 ) -> str:
+    from datetime import timedelta
     now_jst = datetime.now(ZoneInfo("Asia/Tokyo"))
     today_str = f"{now_jst.strftime('%Y年%m月%d日')}（{_WEEKDAYS[now_jst.weekday()]}曜日）"
+
+    # 今後30日の曜日参照テーブル（Claudeが曜日を間違えないよう渡す）
+    date_ref = "\n".join(
+        f"{(now_jst + timedelta(days=i)).strftime('%m/%d')} = {_WEEKDAYS[(now_jst + timedelta(days=i)).weekday()]}曜日"
+        for i in range(30)
+    )
 
     emails_text = "\n".join(
         f"- [{e.get('importance', '?')}] {e.get('sender', '')} / {e.get('subject', '')} — {e.get('summary', '')} （処理日: {e.get('created_at', '')[:10]}）"
@@ -637,6 +644,9 @@ async def generate_daily_report(
     prompt = f"""以下の情報をもとに、本日の日次レポートを日本語で作成してください。
 
 今日の日付（JST）: {today_str}
+
+## 曜日参照テーブル（必ずこれを使うこと）
+{date_ref}
 
 ## 重要メール（直近）
 {emails_text}
@@ -659,7 +669,12 @@ async def generate_daily_report(
 
 ## 出力ルール
 - タイトル行（日付・「日次レポート」などの見出し）は出力しないこと。本文のみ出力する。
-- Discordに貼れるMarkdown形式で出力してください。
+- **Markdownのパイプ表（| col | col | と |---|---|）は絶対に使わないこと。Discordで正しく表示されないため。**
+- 要注意メール・アクションは以下の形式で1件ずつ箇条書きにすること（曜日は上記テーブルから正確に引くこと）:
+  🔴 **高** — 6/2(火) 13:00 | シンプレクス 2次ES | ES作成・提出
+  🟡 **中** — 6/3(水) 12:00 | NTT R&D 夏期インターン | 応募フォーム提出
+  🟢 **参考** — 6/9(火) 16:45 | NTT R&D セミナー | Zoom参加
+- 日付に曜日を付ける場合は、上記の曜日参照テーブルを必ず確認すること。自分で計算してはいけない。
 - メール要約中の「明日」「今日」などの相対日付は処理日時点の表現。今日の日付を基準に**すでに過ぎた締切は報告しない**。今後の予定・締切のみ要注意として挙げること。"""
 
     response = await _create_with_retry(
