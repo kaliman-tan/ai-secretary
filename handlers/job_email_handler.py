@@ -80,22 +80,17 @@ async def run_batch(bot: discord.Client) -> None:
         if not already:
             body = await asyncio.to_thread(gmail_service.get_email_body, email["id"])
 
-            # 要約とToDo抽出を並列実行
+            # 要約・ToDo抽出を1回のAPIコールで実行
             try:
-                summary_data, email_todos = await asyncio.gather(
-                    claude_service.summarize_job_email(
-                        subject=email["subject"],
-                        sender=email["sender"],
-                        body=body,
-                        career_goal=career_goal,
-                    ),
-                    claude_service.extract_email_todos(
-                        subject=email["subject"],
-                        sender=email["sender"],
-                        body=body,
-                        score=email["score"],
-                    ),
+                result = await claude_service.analyze_job_email(
+                    subject=email["subject"],
+                    sender=email["sender"],
+                    body=body,
+                    career_goal=career_goal,
+                    score=email["score"],
                 )
+                summary_data = result
+                email_todos = result.get("todos", [])
             except Exception as e:
                 print(f"[job_email] メール処理エラー ({email['subject']}): {e}")
                 summary_data = {"summary": "", "action": "内容を確認してください", "deadline": None}

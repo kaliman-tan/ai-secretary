@@ -525,7 +525,14 @@ async def chat(user_message: str, conversation_history: list[dict] | None = None
 # Date parsing helper (イベント確認フローの修正入力用)
 # ---------------------------------------------------------------------------
 
+_datetime_cache: dict[tuple, str] = {}
+
+
 async def parse_datetime_natural(date_expr: str, now_jst: datetime) -> datetime:
+    cache_key = (date_expr.strip(), now_jst.strftime("%Y-%m-%d"))
+    if cache_key in _datetime_cache:
+        return datetime.fromisoformat(_datetime_cache[cache_key])
+
     now_weekday = _WEEKDAYS[now_jst.weekday()]
 
     prompt = f"""以下の日時表現を解釈して、正確な日時をJSON形式で返してください（他のテキスト不要）。
@@ -552,6 +559,7 @@ async def parse_datetime_natural(date_expr: str, now_jst: datetime) -> datetime:
 
     text = response.content[0].text.strip()
     parsed = _extract_json(text)
+    _datetime_cache[cache_key] = parsed["datetime"]
     return datetime.fromisoformat(parsed["datetime"])
 
 
@@ -567,47 +575,6 @@ def _extract_json(text: str) -> dict:
         if match:
             return json.loads(match.group())
         raise
-
-
-async def analyze_email(sender: str, subject: str, body: str) -> dict:
-    contacts = supabase_service.get_important_contacts()
-    rules = supabase_service.get_custom_rules()
-
-    contact_emails = {c["email"]: c["name"] for c in contacts}
-    important_sender = sender in contact_emails
-
-    rule_hints = ""
-    for rule in rules:
-        if rule["rule_type"] == "sender" and rule["target"].lower() in sender.lower():
-            rule_hints += f"\nルール適用: このメールは「{rule['action']}」"
-
-    prompt = f"""以下のメールを分析してください。{rule_hints}
-
-送信者: {sender} {"（重要な連絡先: " + contact_emails[sender] + "）" if important_sender else ""}
-件名: {subject}
-本文:
-{body[:2000]}
-
-以下のJSON形式で返答してください（他のテキストは不要）:
-{{
-  "importance": "高|中|低",
-  "summary": "2〜3文での要約",
-  "action": "推奨アクション",
-  "deadline": "期限があれば（なければnull）",
-  "reply_suggestion": "返信案（必要な場合のみ、不要ならnull）"
-}}"""
-
-    response = await _create_with_retry(
-        model=CLAUDE_MODEL,
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    text = response.content[0].text.strip()
-    try:
-        return _extract_json(text)
-    except Exception:
-        return {"importance": "不明", "summary": text, "action": "", "deadline": None, "reply_suggestion": None}
 
 
 async def generate_daily_report(
@@ -680,6 +647,7 @@ async def generate_daily_report(
     response = await _create_with_retry(
         model=CLAUDE_MODEL,
         max_tokens=2048,
+        system=_system_block(_CHARACTER),
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text.strip()
@@ -761,66 +729,39 @@ JSON配列で返してください（他のテキスト不要）:
     return all_results
 
 
-async def extract_email_todos(subject: str, sender: str, body: str, score: int) -> list[dict]:
+async def analyze_job_email(subject: str, sender: str, body: str, career_goal: str, score: int) -> dict:
+    """就活メールを1回のAPIコールで要約・ToDo抽出する。"""
     today = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y-%m-%d")
-    prompt = f"""以下の就活メールから、アクションが必要な項目を抽出してください。
+    prompt = f"""以下の就活メールを分析してください。
 
 今日の日付: {today}
-送信者: {sender}
-件名: {subject}
-本文:
-{body[:3000]}
-
-## 抽出ルール
-- 返信・申し込み・提出・予約など具体的なアクションが必要なものだけ生成する
-- タイトルは「企業名 + アクション内容」の形式にする（例：「NTT R&D 面接日程を返信する」）
-- due_date は YYYY-MM-DD 形式。本文から読み取れない場合は null
-
-## ToDo不要なケース（空リストを返す）
-- 確認のみで返信・操作が不要なもの（合格通知の確認のみ等）
-- 期限も予約も返信も不要なもの
-
-JSON形式で返してください（他のテキスト不要）:
-{{"todos": [{{"title": "アクション内容", "due_date": "YYYY-MM-DDまたはnull"}}]}}
-アクション不要の場合: {{"todos": []}}"""
-
-    response = await _create_with_retry(
-        model=CLAUDE_MODEL,
-        max_tokens=400,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    text = response.content[0].text.strip()
-    try:
-        parsed = _extract_json(text)
-        return parsed.get("todos", [])
-    except Exception as e:
-        print(f"[extract_email_todos] JSON解析失敗: {e}")
-        return []
-
-
-async def summarize_job_email(subject: str, sender: str, body: str, career_goal: str) -> dict:
-    prompt = f"""以下の就活メールを要約してアクションを提案してください。
-
 キャリア目標: {career_goal or "未設定"}
 送信者: {sender}
 件名: {subject}
 本文:
 {body[:3000]}
 
-JSON形式で返してください（他のテキスト不要）:
+以下のJSON形式で返してください（他のテキスト不要）:
 {{
   "summary": "2〜3文での要約",
   "action": "推奨アクション（具体的に）",
-  "deadline": "期限（なければnull）"
-}}"""
+  "deadline": "期限（なければnull）",
+  "todos": [
+    {{"title": "企業名 + アクション内容（例：NTT R&D 面接日程を返信する）", "due_date": "YYYY-MM-DDまたはnull"}}
+  ]
+}}
+
+## todosの抽出ルール
+- 返信・申し込み・提出・予約など具体的なアクションが必要なものだけ生成する
+- 確認のみ・返信不要・期限も操作も不要なケース → "todos": []"""
 
     response = await _create_with_retry(
         model=CLAUDE_MODEL,
-        max_tokens=300,
+        max_tokens=600,
         messages=[{"role": "user", "content": prompt}],
     )
     text = response.content[0].text.strip()
     try:
         return _extract_json(text)
     except Exception:
-        return {"summary": text[:200], "action": "内容を確認してください", "deadline": None}
+        return {"summary": text[:200], "action": "内容を確認してください", "deadline": None, "todos": []}
