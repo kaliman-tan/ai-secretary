@@ -176,14 +176,19 @@ async def _handle_inner(message: discord.Message, bot: discord.Client) -> None:
             "role": "user",
             "content": [{"type": "tool_result", "tool_use_id": result["tool_use_id"], "content": result_text}],
         })
-        if result["name"] in _QUERY_TOOLS:
-            # クエリ系ツール: 結果をClaudeに渡して最終応答を生成
+        if result["name"] in _QUERY_TOOLS and result["input"].get("user_question"):
+            # user_questionがある場合のみClaudeで最終応答を生成（分析・アドバイスが必要）
             final_text = await claude_service.generate_final_response(_get_history(channel_id))
             if final_text:
                 await channel.send(final_text)
                 _push_history(channel_id, "assistant", final_text)
             else:
+                await channel.send(result_text)
                 _push_history(channel_id, "assistant", result_text)
+        elif result["name"] in _QUERY_TOOLS:
+            # user_questionなし: ツール結果をそのまま送信
+            await channel.send(result_text)
+            _push_history(channel_id, "assistant", result_text)
         else:
             # アクション系ツール: ツール内でDiscord送信済みなのでサマリーのみ記録
             _push_history(channel_id, "assistant", result_text)

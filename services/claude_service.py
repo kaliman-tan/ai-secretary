@@ -1,7 +1,7 @@
 import anthropic
 import asyncio
 import logging
-from config import ANTHROPIC_API_KEY, CLAUDE_MODEL
+from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, CLAUDE_HAIKU_MODEL
 from services import supabase_service
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -552,7 +552,7 @@ async def parse_datetime_natural(date_expr: str, now_jst: datetime) -> datetime:
 {{"datetime": "YYYY-MM-DDTHH:MM:SS+09:00"}}"""
 
     response = await _create_with_retry(
-        model=CLAUDE_MODEL,
+        model=CLAUDE_HAIKU_MODEL,
         max_tokens=128,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -687,7 +687,7 @@ async def score_job_emails(emails: list[dict], career_goal: str) -> list[dict]:
 - 迷ったら低くつけるより高めにつけること（見逃しコストのほうが高い）"""
 
     all_results: list[dict] = []
-    batch_size = 10
+    batch_size = 20
 
     for batch_start in range(0, len(emails), batch_size):
         batch = emails[batch_start:batch_start + batch_size]
@@ -707,8 +707,8 @@ JSON配列で返してください（他のテキスト不要）:
 [{{"index": {batch_start}, "score": 5, "reason": "面接案内のため"}}, ...]"""
 
         response = await _create_with_retry(
-            model=CLAUDE_MODEL,
-            max_tokens=1024,
+            model=CLAUDE_HAIKU_MODEL,
+            max_tokens=1536,
             messages=[{"role": "user", "content": prompt}],
         )
 
@@ -756,7 +756,7 @@ async def analyze_job_email(subject: str, sender: str, body: str, career_goal: s
 - 確認のみ・返信不要・期限も操作も不要なケース → "todos": []"""
 
     response = await _create_with_retry(
-        model=CLAUDE_MODEL,
+        model=CLAUDE_HAIKU_MODEL,
         max_tokens=600,
         messages=[{"role": "user", "content": prompt}],
     )
