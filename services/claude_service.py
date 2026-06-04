@@ -225,8 +225,12 @@ TOOLS = [
     {
         "name": "update_profile",
         "description": (
-            "自分自身のプロフィールや設定を更新する。"
-            "「私の名前は〇〇」「職業は〜」「メール閾値を3にして」のときに使う。"
+            "自分自身のプロフィールや設定を更新する。ToDoやカレンダーへの追加ではない。\n"
+            "使う場面の例:\n"
+            "- 「私の名前は〇〇」「職業は〜」→ name / role\n"
+            "- 「志望業界に〇〇を追加して」「〇〇業界も見たい」→ priorities\n"
+            "- 「キャリア目標は〇〇」「〇〇を優先したい」→ priorities\n"
+            "- 「メール閾値を3にして」→ email_score_threshold\n"
             "他人の情報はadd_contactを使う。"
         ),
         "input_schema": {
@@ -237,6 +241,13 @@ TOOLS = [
                 "hobbies": {"type": "string"},
                 "traits": {"type": "string"},
                 "notes": {"type": "string"},
+                "priorities": {
+                    "type": "string",
+                    "description": (
+                        "志望業界・キャリア優先事項。就活メールのスコアリングに直接使われる。"
+                        "例: 「IT・通信・エンタメ・製薬・食品」"
+                    ),
+                },
                 "email_score_threshold": {
                     "type": "integer",
                     "description": (

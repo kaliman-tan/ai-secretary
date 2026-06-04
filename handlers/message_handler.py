@@ -432,6 +432,7 @@ async def _handle_profile_update(channel: discord.TextChannel, fields: dict) -> 
         "hobbies": fields.get("hobbies"),
         "traits": fields.get("traits"),
         "notes": fields.get("notes"),
+        "priorities": fields.get("priorities"),
     }
 
     threshold = fields.get("email_score_threshold")
@@ -445,12 +446,19 @@ async def _handle_profile_update(channel: discord.TextChannel, fields: dict) -> 
         "職業": fields.get("role"),
         "趣味": fields.get("hobbies"),
         "特性": fields.get("traits"),
+        "志望業界・優先事項": fields.get("priorities"),
     }.items() if v]
 
     if threshold is not None:
         await channel.send(
             f"✅ メール重要度フィルターを **スコア{threshold}以上** に変更したよ！\n"
             f"次回のバッチからこの閾値で絞り込むね！"
+        )
+    elif fields.get("priorities"):
+        await channel.send(
+            f"✅ 志望業界・優先事項を更新したよ！\n"
+            f"📌 {fields['priorities']}\n"
+            f"次回のメールバッチからこの内容でスコアリングするね！"
         )
     elif saved_keys:
         items = "・".join(saved_keys)
