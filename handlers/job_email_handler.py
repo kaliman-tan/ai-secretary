@@ -3,7 +3,7 @@ import re
 import discord
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
-from services import gmail_service, claude_service, supabase_service
+from services import gmail_service, claude_service, supabase_service, google_tasks_service
 from config import DISCORD_EMAIL_CHANNEL_ID, TIMEZONE, GMAIL_JOB_LABEL
 
 # channel_id -> list of todo candidates waiting for user selection
@@ -180,6 +180,11 @@ async def handle_todo_confirmation(channel: discord.TextChannel, content: str) -
             todo["title"], todo.get("due_date"), todo["source_id"], todo["score"],
         )
         if saved:
+            due_iso = (todo["due_date"] + "T00:00:00+09:00") if todo.get("due_date") else None
+            await asyncio.to_thread(
+                google_tasks_service.create_task,
+                todo["title"], due_iso, None,
+            )
             added.append(todo)
 
     if added:
