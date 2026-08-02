@@ -51,7 +51,10 @@ async def run_batch(bot: discord.Client) -> None:
         )
 
     blocks = [
-        f"・**{_fmt_item_title(it)}**{_fmt_due(it.get('deadline'))}\n  {it.get('summary', '')}\n  <{it['url']}>"
+        f"・**{it.get('company', '')}** — {it.get('company_desc', '')}\n"
+        f"  {_fmt_item_title(it)}{_fmt_due(it.get('deadline'))}\n"
+        f"  {it.get('summary', '')}\n"
+        f"  <{it['url']}>"
         for it in new_items
     ]
     await channel.send(
