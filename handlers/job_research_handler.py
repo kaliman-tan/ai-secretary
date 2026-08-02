@@ -8,6 +8,9 @@ from config import DISCORD_JOB_RESEARCH_CHANNEL_ID, TIMEZONE
 
 _TZ = ZoneInfo(TIMEZONE)
 
+# 締切がこの日数以内に迫っていて、まだToDo化されていないものは再リマインドする
+_REMINDER_WINDOW_DAYS = 3
+
 # channel_id -> list of todo candidates waiting for user selection
 _pending_todos: dict[int, list[dict]] = {}
 
@@ -33,14 +36,26 @@ async def run_batch(bot: discord.Client) -> None:
         return
 
     new_items = []
+    reminder_items = []
     for it in items:
-        if not it.get("url"):
+        url = it.get("url")
+        if not url:
             continue
-        logged = await asyncio.to_thread(supabase_service.is_research_logged, it["url"])
+
+        logged = await asyncio.to_thread(supabase_service.is_research_logged, url)
         if not logged:
             new_items.append(it)
+            continue
 
-    if not new_items:
+        # 既出だが、ToDo化されておらず締切が近いものはリマインド対象にする
+        already_added = await asyncio.to_thread(supabase_service.has_research_todo, url)
+        if already_added:
+            continue
+        days_left = _days_until(it.get("deadline"))
+        if days_left is not None and 0 <= days_left <= _REMINDER_WINDOW_DAYS:
+            reminder_items.append(it)
+
+    if not new_items and not reminder_items:
         await channel.send(f"🔎 **就活リサーチ**（{today_str}分）\n今日は新着の募集・締切情報はなかったよ！")
         return
 
@@ -50,19 +65,28 @@ async def run_batch(bot: discord.Client) -> None:
             it["url"], _fmt_item_title(it), it.get("summary", ""),
         )
 
-    blocks = [
-        f"・**{it.get('company', '')}** — {it.get('company_desc', '')}\n"
-        f"  {_fmt_item_title(it)}{_fmt_due(it.get('deadline'))}\n"
-        f"  {it.get('summary', '')}\n"
-        f"  <{it['url']}>"
-        for it in new_items
-    ]
+    def _block(it: dict, tag: str) -> str:
+        return (
+            f"{tag} **{it.get('company', '')}** — {it.get('company_desc', '')}\n"
+            f"  {_fmt_item_title(it)}{_fmt_due(it.get('deadline'))}\n"
+            f"  {it.get('summary', '')}\n"
+            f"  <{it['url']}>"
+        )
+
+    blocks = [_block(it, "🆕") for it in new_items] + [_block(it, "⏰締切間近！") for it in reminder_items]
+    header_parts = []
+    if new_items:
+        header_parts.append(f"新着{len(new_items)}件")
+    if reminder_items:
+        header_parts.append(f"締切間近リマインド{len(reminder_items)}件")
+
     await channel.send(
-        f"🔎 **就活リサーチ**（{today_str}分） — 新着{len(new_items)}件\n\n" + "\n\n".join(blocks)
+        f"🔎 **就活リサーチ**（{today_str}分） — {' / '.join(header_parts)}\n\n" + "\n\n".join(blocks)
     )
 
     # ToDo候補として提示（自動追加はしない）
-    _pending_todos[channel.id] = new_items
+    all_items = new_items + reminder_items
+    _pending_todos[channel.id] = all_items
     lines = [
         f"**{i+1}.** {_fmt_item_title(it)}{_fmt_due(it.get('deadline'))}"
         for i, it in enumerate(new_items)
@@ -137,3 +161,13 @@ def _fmt_due(deadline_str: str | None) -> str:
         return f"（締切：{d.month}/{d.day}）"
     except ValueError:
         return f"（締切：{deadline_str}）"
+
+
+def _days_until(deadline_str: str | None) -> int | None:
+    if not deadline_str:
+        return None
+    try:
+        d = date.fromisoformat(deadline_str)
+        return (d - datetime.now(_TZ).date()).days
+    except ValueError:
+        return None

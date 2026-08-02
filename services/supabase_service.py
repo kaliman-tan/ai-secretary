@@ -177,6 +177,13 @@ def add_email_todo(title: str, due_date: str | None, source_id: str, priority: i
     return res.data[0] if res.data else None
 
 
+def has_research_todo(source_id: str) -> bool:
+    """指定した source_id（リサーチ結果のURL）が既にToDo化されているか確認する。"""
+    client = get_client()
+    res = client.table("todos").select("id").eq("source", "research").eq("source_id", source_id).execute()
+    return bool(res.data)
+
+
 def add_research_todo(title: str, due_date: str | None, source_id: str, priority: str = "normal") -> dict | None:
     """就活リサーチから生成したToDoをtodosテーブルに保存する。同一source_id+titleは重複追加しない。"""
     client = get_client()
