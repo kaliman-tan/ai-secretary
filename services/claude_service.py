@@ -270,9 +270,23 @@ TOOLS = [
         "name": "check_job_research",
         "description": (
             "就活リサーチ（28卒向けインターン・選考の募集/締切情報）を今すぐ実行する。"
-            "ユーザーが就活リサーチの実行や再確認を指示した場合に使う。"
+            "ユーザーが就活リサーチの実行や再確認を指示した場合に使う。\n"
+            "「〇〇業界のインターン締切を調べて」「大手ゲーム会社の説明会を調べて」のように"
+            "対象を具体的に指定された場合は topic に入れる。指定がなければ省略し、"
+            "プロフィールの志望業界全体を対象にする。"
         ),
-        "input_schema": {"type": "object", "properties": {}},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "description": (
+                        "リサーチ対象の具体的な指定（例：「大手ゲーム会社」「〇〇業界」「エンジニア職」）。"
+                        "省略時はプロフィールの志望業界全体を対象にする。"
+                    ),
+                },
+            },
+        },
     },
 ]
 
@@ -755,17 +769,18 @@ JSON配列で返してください（他のテキスト不要）:
     return all_results
 
 
-async def research_job_news(priorities: str) -> list[dict]:
-    """志望業界・優先事項に関連する、インターン・選考の募集開始/締切情報をWeb検索して構造化データで返す。"""
+async def research_job_news(target_hint: str) -> list[dict]:
+    """指定された対象（志望業界、または「大手ゲーム会社」等の具体的なトピック）に関連する、
+    インターン・選考の募集開始/締切情報をWeb検索して構造化データで返す。"""
     today = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y-%m-%d")
-    query_hint = priorities or "IT・Web業界"
+    query_hint = target_hint or "IT・Web業界"
     prompt = f"""あなたはユーザーの就職活動をサポートするリサーチャーです。
 ユーザーが最も恐れているのは「興味があるかもしれない企業のインターン・選考の締切を知らないうちに逃してしまうこと」です。
 一般的な業界ニュースではなく、**具体的な応募締切・エントリー期間がある募集情報**だけを探してください。
 
 今日の日付: {today}
 
-## 志望業界・優先事項
+## 検索対象
 {query_hint}
 
 ## 対象学年

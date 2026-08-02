@@ -15,22 +15,35 @@ _REMINDER_WINDOW_DAYS = 3
 _pending_todos: dict[int, list[dict]] = {}
 
 
-async def run_batch(bot: discord.Client) -> None:
-    """志望業界のインターン・選考募集/締切情報をリサーチしてDiscordに投稿する。"""
-    if DISCORD_JOB_RESEARCH_CHANNEL_ID == 0:
-        return
-    channel = bot.get_channel(DISCORD_JOB_RESEARCH_CHANNEL_ID)
+async def run_batch(
+    bot: discord.Client,
+    channel: discord.TextChannel | None = None,
+    topic: str | None = None,
+) -> None:
+    """インターン・選考募集/締切情報をリサーチしてDiscordに投稿する。
+
+    channel を省略すると就活リサーチチャンネルに投稿する（毎日0時のバッチ用）。
+    topic を指定すると、プロフィールの志望業界の代わりにそのトピックで検索する
+    （チャットから「〇〇業界を調べて」等と指示された場合用）。
+    """
     if channel is None:
-        return
+        if DISCORD_JOB_RESEARCH_CHANNEL_ID == 0:
+            return
+        channel = bot.get_channel(DISCORD_JOB_RESEARCH_CHANNEL_ID)
+        if channel is None:
+            return
 
     now = datetime.now(_TZ)
     today_str = f"{now.month}月{now.day}日"
 
-    profile = await asyncio.to_thread(supabase_service.get_user_profile)
-    priorities = profile.get("priorities", "")
+    if topic:
+        target_hint = topic
+    else:
+        profile = await asyncio.to_thread(supabase_service.get_user_profile)
+        target_hint = profile.get("priorities", "")
 
     try:
-        items = await claude_service.research_job_news(priorities)
+        items = await claude_service.research_job_news(target_hint)
     except Exception as e:
         print(f"[job_research] リサーチエラー: {e}")
         return

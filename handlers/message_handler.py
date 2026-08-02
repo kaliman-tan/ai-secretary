@@ -324,9 +324,11 @@ async def _dispatch_tool(
 
     elif name == "check_job_research":
         from handlers.job_research_handler import run_batch
-        await channel.send("🔎 就活リサーチを実行中...ちょっと待ってね！")
-        await run_batch(bot)
-        return "就活リサーチを実行した"
+        topic = inputs.get("topic")
+        label = f"「{topic}」について" if topic else ""
+        await channel.send(f"🔎 就活リサーチ{label}を実行中...ちょっと待ってね！")
+        await run_batch(bot, channel=channel, topic=topic)
+        return f"就活リサーチを実行した{'（対象: ' + topic + '）' if topic else ''}"
 
     else:
         logger.warning(f"[dispatch] 未知のツール: {name}")
