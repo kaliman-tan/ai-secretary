@@ -748,34 +748,43 @@ JSON配列で返してください（他のテキスト不要）:
 
 
 async def research_job_news(priorities: str) -> list[dict]:
-    """志望業界・優先事項に関連する新着ニュースをWeb検索して構造化データで返す。"""
+    """志望業界・優先事項に関連する、インターン・選考の募集開始/締切情報をWeb検索して構造化データで返す。"""
+    today = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y-%m-%d")
     query_hint = priorities or "IT・Web業界"
     prompt = f"""あなたはユーザーの就職活動をサポートするリサーチャーです。
-以下の志望業界・優先事項に関連する、直近24〜48時間以内の新着ニュース・お知らせをWeb検索で調べてください。
+ユーザーが最も恐れているのは「興味があるかもしれない企業のインターン・選考の締切を知らないうちに逃してしまうこと」です。
+一般的な業界ニュースではなく、**具体的な応募締切・エントリー期間がある募集情報**だけを探してください。
+
+今日の日付: {today}
 
 ## 志望業界・優先事項
 {query_hint}
 
-## 検索対象の例
-- 志望業界のニュース・トレンド
-- 志望業界の主要企業の採用・新卒/インターン関連の発表
-- 業界動向・市場ニュース
+## 探すべき情報（これ以外は不要）
+- 上記業界の企業によるインターンシップの募集開始・エントリー締切
+- 上記業界の企業による本選考（新卒採用）のエントリー開始・締切
+- 説明会・セミナーの応募締切（選考に直結するもの）
+
+## 除外すべき情報
+- 締切や応募期間が明記されていない一般ニュース・業績・トレンド記事
+- すでに締切が過ぎているもの（今日の日付より前の締切）
 
 ## 出力ルール
 - 検索して実際に見つかった情報のみを使うこと。推測や一般論は書かないこと
-- 本当に新しく重要そうな情報だけを3〜6件に厳選する
+- 締切・応募期間が具体的にわかるものだけを3〜8件に厳選する
+- 締切が近い順に並べること
 - 出力は以下のJSON配列のみ（説明文・Markdownのコードブロック不要）:
-[{{"title": "見出し", "url": "https://...", "summary": "1〜2文の要約"}}]
-- 該当する新着情報が無ければ空配列 [] を返す"""
+[{{"company": "企業名", "title": "募集内容（例：26卒本選考 エントリー締切）", "url": "https://...", "deadline": "YYYY-MM-DD（わからなければnull）", "summary": "1〜2文の要約"}}]
+- 該当する情報が無ければ空配列 [] を返す"""
 
     response = await _create_with_retry(
         model=CLAUDE_MODEL,
         max_tokens=2048,
-        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}],
+        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 8}],
         messages=[{"role": "user", "content": prompt}],
     )
 
-    text = "".join(b.text for b in response.content if hasattr(b, "text"))
+    text = "".join(b.text for b in response.content if getattr(b, "type", None) == "text" and b.text)
     try:
         match = re.search(r"\[.*\]", text, re.DOTALL)
         return json.loads(match.group() if match else text)

@@ -177,6 +177,24 @@ def add_email_todo(title: str, due_date: str | None, source_id: str, priority: i
     return res.data[0] if res.data else None
 
 
+def add_research_todo(title: str, due_date: str | None, source_id: str, priority: str = "normal") -> dict | None:
+    """就活リサーチから生成したToDoをtodosテーブルに保存する。同一source_id+titleは重複追加しない。"""
+    client = get_client()
+    existing = client.table("todos").select("id").eq("source_id", source_id).eq("title", title).execute()
+    if existing.data:
+        return None
+    res = client.table("todos").insert({
+        "title": title,
+        "due_date": due_date,
+        "source": "research",
+        "source_id": source_id,
+        "priority": priority,
+        "done": False,
+        "created_at": datetime.utcnow().isoformat(),
+    }).execute()
+    return res.data[0] if res.data else None
+
+
 def complete_todo(todo_id: int) -> None:
     client = get_client()
     client.table("todos").update({

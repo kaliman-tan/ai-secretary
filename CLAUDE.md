@@ -163,11 +163,14 @@ assistant(str)                  # ツール結果のサマリー（APIコール�
 
 ## 就活リサーチバッチ処理
 
+**目的**: 一般ニュースではなく、興味のある業界の企業のインターン・選考の募集開始/エントリー締切を見逃さないこと。
+
 1. `user_profile.priorities`（志望業界・優先事項）を取得
-2. Claude の Web 検索ツール（`web_search_20250305`、サーバー側実行）で直近24〜48hの関連ニュースを検索、JSON配列で3〜6件に厳選
-3. `research_logs.url` で重複チェック → 未通知の記事のみ抽出
-4. 新規記事を `research_logs` に保存
+2. Claude の Web 検索ツール（`web_search_20250305`、サーバー側実行）で、締切が明記された募集情報のみを検索・抽出（company/title/deadline/summary/url の JSON配列、締切が近い順、3〜8件）
+3. `research_logs.url` で重複チェック → 未通知の情報のみ抽出
+4. 新規分を `research_logs` に保存
 5. Discord（就活リサーチチャンネル）に投稿。新着が無い日は「なかったよ」メッセージのみ
+6. 見つかった募集情報を ToDo 候補として番号付きで提示（`job_email_handler` と同じ UX）。ユーザーが番号選択すると `todos`（`source="research"`）+ Google Tasks に締切日時（23:59）付きで登録される
 
 `priorities` が未設定の場合は「IT・Web業界」をデフォルトの検索対象とする。
 

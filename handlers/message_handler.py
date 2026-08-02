@@ -147,9 +147,12 @@ async def _handle_inner(message: discord.Message, bot: discord.Client) -> None:
         return
 
     # ToDo候補の選択待ちがあれば処理
-    from handlers import job_email_handler
+    from handlers import job_email_handler, job_research_handler
     if channel_id in job_email_handler._pending_todos:
         await job_email_handler.handle_todo_confirmation(channel, content)
+        return
+    if channel_id in job_research_handler._pending_todos:
+        await job_research_handler.handle_todo_confirmation(channel, content)
         return
 
     # タスク実施日時の回答待ちがあれば処理
