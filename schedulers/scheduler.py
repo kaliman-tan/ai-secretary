@@ -6,7 +6,7 @@ from config import (
     DAILY_REPORT_HOUR, DAILY_REPORT_MINUTE, TIMEZONE,
     ANTHROPIC_CURRENT_CREDITS, ANTHROPIC_DAILY_AVG, DISCORD_CREDIT_CHANNEL_ID,
 )
-from handlers import report_handler, job_email_handler
+from handlers import report_handler, job_email_handler, job_research_handler
 
 
 def setup(bot: discord.Client) -> AsyncIOScheduler:
@@ -31,6 +31,14 @@ def setup(bot: discord.Client) -> AsyncIOScheduler:
         coalesce=True,
     )
 
+    # 就活リサーチ（深夜0時）
+    scheduler.add_job(
+        _run_job_research,
+        CronTrigger(hour=0, minute=0, timezone=tz),
+        args=[bot],
+        id="job_research_batch",
+    )
+
     # クレジット残高チェック（1時間ごと）
     scheduler.add_job(
         _run_credit_check,
@@ -45,6 +53,10 @@ def setup(bot: discord.Client) -> AsyncIOScheduler:
 
 async def _run_job_email_batch(bot: discord.Client) -> None:
     await job_email_handler.run_batch(bot)
+
+
+async def _run_job_research(bot: discord.Client) -> None:
+    await job_research_handler.run_batch(bot)
 
 
 async def _run_daily_report(bot: discord.Client) -> None:

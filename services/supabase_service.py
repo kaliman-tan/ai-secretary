@@ -255,6 +255,26 @@ def is_email_logged(message_id: str) -> bool:
     return bool(res.data)
 
 
+# --- Job research logs ---
+
+def is_research_logged(url: str) -> bool:
+    client = get_client()
+    res = client.table("research_logs").select("id").eq("url", url).execute()
+    return bool(res.data)
+
+
+def save_research_log(url: str, title: str, summary: str = "") -> None:
+    client = get_client()
+    existing = client.table("research_logs").select("id").eq("url", url).execute()
+    if not existing.data:
+        client.table("research_logs").insert({
+            "url": url,
+            "title": title,
+            "summary": summary,
+            "created_at": datetime.utcnow().isoformat(),
+        }).execute()
+
+
 # --- Notion sync ---
 
 def get_unsynced_todos() -> list[dict]:

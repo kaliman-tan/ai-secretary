@@ -398,7 +398,7 @@ def _system_block(prompt: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 async def chat_with_tools(
-    user_message: str,
+    user_message: str | None,
     conversation_history: list[dict],
 ) -> dict:
     """
@@ -449,7 +449,8 @@ async def chat_with_tools(
             cleaned.append(m)
             j += 1
     messages = cleaned
-    messages.append({"role": "user", "content": user_message})
+    if user_message is not None:
+        messages.append({"role": "user", "content": user_message})
 
     system_prompt = _build_system_prompt()
 
@@ -744,6 +745,43 @@ JSON配列で返してください（他のテキスト不要）:
             ])
 
     return all_results
+
+
+async def research_job_news(priorities: str) -> list[dict]:
+    """志望業界・優先事項に関連する新着ニュースをWeb検索して構造化データで返す。"""
+    query_hint = priorities or "IT・Web業界"
+    prompt = f"""あなたはユーザーの就職活動をサポートするリサーチャーです。
+以下の志望業界・優先事項に関連する、直近24〜48時間以内の新着ニュース・お知らせをWeb検索で調べてください。
+
+## 志望業界・優先事項
+{query_hint}
+
+## 検索対象の例
+- 志望業界のニュース・トレンド
+- 志望業界の主要企業の採用・新卒/インターン関連の発表
+- 業界動向・市場ニュース
+
+## 出力ルール
+- 検索して実際に見つかった情報のみを使うこと。推測や一般論は書かないこと
+- 本当に新しく重要そうな情報だけを3〜6件に厳選する
+- 出力は以下のJSON配列のみ（説明文・Markdownのコードブロック不要）:
+[{{"title": "見出し", "url": "https://...", "summary": "1〜2文の要約"}}]
+- 該当する新着情報が無ければ空配列 [] を返す"""
+
+    response = await _create_with_retry(
+        model=CLAUDE_MODEL,
+        max_tokens=2048,
+        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}],
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    text = "".join(b.text for b in response.content if hasattr(b, "text"))
+    try:
+        match = re.search(r"\[.*\]", text, re.DOTALL)
+        return json.loads(match.group() if match else text)
+    except Exception as e:
+        logger.warning(f"[research_job_news] JSON解析失敗: {e} / text={text[:300]}")
+        return []
 
 
 async def analyze_job_email(subject: str, sender: str, body: str, career_goal: str, score: int) -> dict:

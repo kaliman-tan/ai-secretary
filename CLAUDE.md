@@ -55,6 +55,7 @@ cd ~/ai-secretary && git pull && sudo systemctl restart ai-secretary
 | 日次レポート | 毎朝7時のレポート送信先 | `1505938308386259135` |
 | ToDo | ToDo 一覧表示 | `1505938339759653084` |
 | クレジット確認 | Anthropic 残高アラート | `1506198964230164520` |
+| 就活リサーチ | 志望業界の新着ニュースを毎日リサーチ・投稿 | `1533387135573295235` |
 
 `config.py` の `DISCORD_ALLOWED_CHANNEL_IDS` に含まれていないチャンネルはメッセージを**無視する**（ログにも残らない）。
 
@@ -72,7 +73,8 @@ handlers/
 ├── message_handler.py    → Discord メッセージ受信・Tool Use ディスパッチ・会話履歴管理
 ├── report_handler.py     → 日次レポート生成・送信
 ├── todo_handler.py       → ToDo CRUD の Discord 応答
-└── job_email_handler.py  → 就活メールバッチ処理
+├── job_email_handler.py  → 就活メールバッチ処理
+└── job_research_handler.py → 就活リサーチバッチ処理（Web検索）
 
 services/
 ├── claude_service.py     → Anthropic API 呼び出し・Tool 定義・各種プロンプト
@@ -86,8 +88,9 @@ services/
 
 | ジョブ ID | 処理 | 時刻 |
 |---|---|---|
-| `daily_report` | 日次レポート生成・Discord 送信 | 毎日 7:00（`DAILY_REPORT_HOUR` / `DAILY_REPORT_MINUTE` で変更可） |
+| `daily_report` | 日次レポート生成・Discord 送信 | 毎日 0:00（`DAILY_REPORT_HOUR` / `DAILY_REPORT_MINUTE` で変更可） |
 | `job_email_batch` | 就活メール取得・スコアリング・Discord 通知 | 毎日 0:00 |
+| `job_research_batch` | 志望業界の新着ニュースをWeb検索・Discord 通知 | 毎日 0:00 |
 | `notion_todo_sync` | Supabase → Notion の未同期 ToDo を同期 | 毎日 0:00 |
 | `credit_check` | Anthropic クレジット残高アラート | 1 時間ごと |
 
@@ -144,6 +147,7 @@ assistant(str)                  # ツール結果のサマリー（APIコール�
 | `conversation_history` | チャンネルごとの会話履歴（JSON）|
 | `decision_history` | 意思決定ログ（現状未使用）|
 | `event_logs` | カレンダー登録ログ |
+| `research_logs` | 就活リサーチで通知済みの記事 URL ログ（重複防止用）|
 
 `supabase_service` は `user_profile` / `custom_rules` / `contacts` に TTL 5 分のインメモリキャッシュを持つ。
 
@@ -156,6 +160,16 @@ assistant(str)                  # ツール結果のサマリー（APIコール�
 5. Discord に投稿 → ToDo 候補を提示（ユーザーが番号を選択して追加）
 
 `email_score_threshold` は `user_profile.preferences.email_score_threshold` で変更可能。
+
+## 就活リサーチバッチ処理
+
+1. `user_profile.priorities`（志望業界・優先事項）を取得
+2. Claude の Web 検索ツール（`web_search_20250305`、サーバー側実行）で直近24〜48hの関連ニュースを検索、JSON配列で3〜6件に厳選
+3. `research_logs.url` で重複チェック → 未通知の記事のみ抽出
+4. 新規記事を `research_logs` に保存
+5. Discord（就活リサーチチャンネル）に投稿。新着が無い日は「なかったよ」メッセージのみ
+
+`priorities` が未設定の場合は「IT・Web業界」をデフォルトの検索対象とする。
 
 ## カレンダー登録フロー（確認ステップあり）
 

@@ -166,7 +166,12 @@ async def _handle_inner(message: discord.Message, bot: discord.Client) -> None:
 
     _push_history(channel_id, "user", content)
 
-    if result["type"] == "tool_use":
+    _MAX_TOOL_CALLS = 5
+    tool_call_count = 0
+    final_text_sent = False
+
+    while result["type"] == "tool_use" and tool_call_count < _MAX_TOOL_CALLS:
+        tool_call_count += 1
         # アシスタントのtool_useブロックを正規APIフォーマットで記録
         _push_message(channel_id, {"role": "assistant", "content": result["assistant_content"]})
         summary = await _dispatch_tool(channel, bot, result["name"], result["input"])
@@ -179,22 +184,25 @@ async def _handle_inner(message: discord.Message, bot: discord.Client) -> None:
         if result["name"] in _QUERY_TOOLS and result["input"].get("user_question"):
             # user_questionがある場合のみClaudeで最終応答を生成（分析・アドバイスが必要）
             final_text = await claude_service.generate_final_response(_get_history(channel_id))
-            if final_text:
-                await channel.send(final_text)
-                _push_history(channel_id, "assistant", final_text)
-            else:
-                await channel.send(result_text)
-                _push_history(channel_id, "assistant", result_text)
+            text_to_send = final_text or result_text
+            await channel.send(text_to_send)
+            _push_history(channel_id, "assistant", text_to_send)
+            final_text_sent = True
+            break
         elif result["name"] in _QUERY_TOOLS:
             # user_questionなし: ツール結果をそのまま送信
             await channel.send(result_text)
             _push_history(channel_id, "assistant", result_text)
+            final_text_sent = True
+            break
         else:
-            # アクション系ツール: ツール内でDiscord送信済みなのでサマリーのみ記録
-            _push_history(channel_id, "assistant", result_text)
-    else:
-        _push_history(channel_id, "assistant", result["text"])
-        await channel.send(result["text"])
+            # アクション系ツール: 次のアクションをClaudeに判断させる
+            result = await claude_service.chat_with_tools(None, _get_history(channel_id))
+
+    if not final_text_sent:
+        if result["type"] == "text" and result["text"]:
+            _push_history(channel_id, "assistant", result["text"])
+            await channel.send(result["text"])
 
     # 履歴をSupabaseに保存（awaitで競合状態を防ぐ）
     await _save_history(channel_id)
