@@ -177,6 +177,9 @@ assistant(str)                  # ツール結果のサマリー（APIコール�
 `priorities` が未設定の場合は「IT・Web業界」をデフォルトの検索対象とする。
 `supabase_service.has_research_todo(url)` で ToDo 化済みかどうかを判定する（`todos.source_id` = URL）。
 
+**手動実行**: Discordで「就活リサーチ実行して」等と話しかけると `check_job_research` ツール経由で即時実行できる（`check_job_email` と同じ仕組み）。
+`_pending_todos` はメモリ上のみの状態なので、**必ずbot本体（systemdサービス）のプロセス内で実行しないと番号選択が効かない**。デバッグ目的で別プロセス（使い捨てスクリプト等）から `run_batch` を直接呼ぶと、投稿は届くがToDo番号選択ができなくなる。
+
 ## カレンダー登録フロー（確認ステップあり）
 
 1. `add_event` ツール → `_pending_events[channel_id]` に仮登録

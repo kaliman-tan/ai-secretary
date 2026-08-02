@@ -266,6 +266,14 @@ TOOLS = [
         ),
         "input_schema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "check_job_research",
+        "description": (
+            "就活リサーチ（28卒向けインターン・選考の募集/締切情報）を今すぐ実行する。"
+            "ユーザーが就活リサーチの実行や再確認を指示した場合に使う。"
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
 ]
 
 
