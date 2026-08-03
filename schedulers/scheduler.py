@@ -13,12 +13,14 @@ def setup(bot: discord.Client) -> AsyncIOScheduler:
     tz = ZoneInfo(TIMEZONE)
     scheduler = AsyncIOScheduler(timezone=tz)
 
-    # 就活メールバッチ（深夜0時）
+    # 就活メールバッチ（深夜0時）— misfire_grace_time で数秒のズレでもスキップされないように
     scheduler.add_job(
         _run_job_email_batch,
         CronTrigger(hour=0, minute=0, timezone=tz),
         args=[bot],
         id="job_email_batch",
+        misfire_grace_time=3600,
+        coalesce=True,
     )
 
     # 日次レポート（毎朝）— misfire_grace_time で起動遅延でも確実実行
@@ -31,12 +33,14 @@ def setup(bot: discord.Client) -> AsyncIOScheduler:
         coalesce=True,
     )
 
-    # 就活リサーチ（深夜0時）
+    # 就活リサーチ（深夜0時）— misfire_grace_time で数秒のズレでもスキップされないように
     scheduler.add_job(
         _run_job_research,
         CronTrigger(hour=0, minute=0, timezone=tz),
         args=[bot],
         id="job_research_batch",
+        misfire_grace_time=3600,
+        coalesce=True,
     )
 
     # クレジット残高チェック（1時間ごと）

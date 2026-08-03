@@ -94,8 +94,10 @@ services/
 | `notion_todo_sync` | Supabase → Notion の未同期 ToDo を同期 | 毎日 0:00 |
 | `credit_check` | Anthropic クレジット残高アラート | 1 時間ごと |
 
-`daily_report` は `misfire_grace_time=3600, coalesce=True` 設定済み。  
+`daily_report` / `job_email_batch` / `job_research_batch` はいずれも `misfire_grace_time=3600, coalesce=True` 設定済み。  
 `DAILY_REPORT_HOUR` / `DAILY_REPORT_MINUTE` はデフォルト `0` / `0`。
+
+**misfire_grace_timeを付けない場合の罠**: APSchedulerはデフォルトで実行予定時刻から1秒でも遅れると「見逃し」扱いでジョブをスキップする（何のエラーログも出ずWARNINGのみ）。0:00ちょうどに複数ジョブが重なると数百ms〜1秒程度のズレは普通に起こるため、深夜バッチは必ず`misfire_grace_time`を設定すること。2026-08-04、これが原因で`job_email_batch`と`job_research_batch`が理由もなく1日スキップされる事象が発生した。
 
 ### 起動補完送信（main.py `on_ready`）
 
