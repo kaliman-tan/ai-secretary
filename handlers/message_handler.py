@@ -146,14 +146,14 @@ async def _handle_inner(message: discord.Message, bot: discord.Client) -> None:
         await _handle_event_confirmation(channel, content)
         return
 
-    # ToDo候補の選択待ちがあれば処理
+    # ToDo候補の選択待ちがあれば処理（番号選択に見えないメッセージは通常会話にフォールバック）
     from handlers import job_email_handler, job_research_handler
     if channel_id in job_email_handler._pending_todos:
-        await job_email_handler.handle_todo_confirmation(channel, content)
-        return
+        if await job_email_handler.handle_todo_confirmation(channel, content):
+            return
     if channel_id in job_research_handler._pending_todos:
-        await job_research_handler.handle_todo_confirmation(channel, content)
-        return
+        if await job_research_handler.handle_todo_confirmation(channel, content):
+            return
 
     # タスク実施日時の回答待ちがあれば処理
     if channel_id in _pending_task_dates:

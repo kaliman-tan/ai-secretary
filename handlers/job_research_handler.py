@@ -102,20 +102,21 @@ async def run_batch(
     _pending_todos[channel.id] = all_items
     lines = [
         f"**{i+1}.** {_fmt_item_title(it)}{_fmt_due(it.get('deadline'))}"
-        for i, it in enumerate(new_items)
+        for i, it in enumerate(all_items)
     ]
     await channel.send(
-        f"📋 **ToDo候補 {len(new_items)}件** — 締切をToDoに追加したいものを番号で教えてね！\n"
+        f"📋 **ToDo候補 {len(all_items)}件** — 締切をToDoに追加したいものを番号で教えてね！\n"
         f"（例：`1,3` / `全部` / `なし`）\n\n"
         + "\n".join(lines)
     )
 
 
-async def handle_todo_confirmation(channel: discord.TextChannel, content: str) -> None:
-    """ToDo候補の選択を処理する。"""
+async def handle_todo_confirmation(channel: discord.TextChannel, content: str) -> bool:
+    """ToDo候補の選択を処理する。選択として処理できた場合はTrue、
+    番号選択でも全部/なしでもなさそうなら何もせずFalseを返す（呼び出し側で通常会話にフォールバックさせる）。"""
     items = _pending_todos.get(channel.id, [])
     if not items:
-        return
+        return False
 
     lower = content.strip().lower()
 
@@ -124,7 +125,10 @@ async def handle_todo_confirmation(channel: discord.TextChannel, content: str) -
     elif any(w in lower for w in ["なし", "いらない", "スキップ", "no", "キャンセル", "skip"]):
         del _pending_todos[channel.id]
         await channel.send("わかった！ToDoの追加はスキップするね！")
-        return
+        return True
+    elif not re.search(r'\d', content):
+        # 数字も選択キーワードも含まない = 番号選択への返信ではない
+        return False
     else:
         nums = re.findall(r'\d+', content)
         selected_indices = [int(n) - 1 for n in nums if 1 <= int(n) <= len(items)]
@@ -133,7 +137,7 @@ async def handle_todo_confirmation(channel: discord.TextChannel, content: str) -
             await channel.send(
                 "番号で教えてね！（例：`1,3` / `全部` / `なし`）\n\n" + "\n".join(lines)
             )
-            return
+            return True
 
     del _pending_todos[channel.id]
     added = []
@@ -156,6 +160,7 @@ async def handle_todo_confirmation(channel: discord.TextChannel, content: str) -
         await channel.send(f"✅ **{len(added)}件のToDoを追加したよ！**\n" + "\n".join(lines))
     else:
         await channel.send("追加完了！（すでに登録済みのものはスキップしたよ）")
+    return True
 
 
 def _fmt_item_title(it: dict) -> str:
