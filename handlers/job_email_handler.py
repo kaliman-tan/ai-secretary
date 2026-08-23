@@ -14,6 +14,18 @@ _SCORE_EMOJI = {1: "⭐", 2: "⭐⭐", 3: "⭐⭐⭐", 4: "⭐⭐⭐⭐", 5: "�
 _DIVIDER = "━━━━━━━━━━━━━━━━━━"
 _DEFAULT_THRESHOLD = 4
 
+# 番号選択の返信とみなすための許容文字（数字・カンマ・空白・ごく軽い接続語のみ）
+_SELECTION_NOISE = re.compile(r'[0-9,，、\s番との]')
+
+
+def _is_bare_selection(content: str) -> bool:
+    """メッセージ全体が「1,3」「1番と3番」のような番号選択だけで構成されているか判定する。
+    日付や説明文など、数字を含むだけの無関係なメッセージを誤って選択と解釈しないための防御。"""
+    if not re.search(r'\d', content):
+        return False
+    remainder = _SELECTION_NOISE.sub('', content)
+    return len(remainder) <= 1
+
 
 def _get_threshold() -> int:
     profile = supabase_service.get_user_profile()
@@ -162,8 +174,8 @@ async def handle_todo_confirmation(channel: discord.TextChannel, content: str) -
         del _pending_todos[channel.id]
         await channel.send("わかった！ToDoの追加はスキップするね！")
         return True
-    elif not re.search(r'\d', content):
-        # 数字も選択キーワードも含まない = 番号選択への返信ではない
+    elif not _is_bare_selection(content):
+        # 番号だけの返信ではない（日付や説明文に数字が混ざっているだけ等）= 選択への返信ではない
         return False
     else:
         nums = re.findall(r'\d+', content)
