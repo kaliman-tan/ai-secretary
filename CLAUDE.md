@@ -90,7 +90,7 @@ services/
 |---|---|---|
 | `daily_report` | 日次レポート生成・Discord 送信 | 毎日 0:00（`DAILY_REPORT_HOUR` / `DAILY_REPORT_MINUTE` で変更可） |
 | `job_email_batch` | 就活メール取得・スコアリング・Discord 通知 | 毎日 0:00 |
-| `job_research_batch` | 志望業界の新着ニュースをWeb検索・Discord 通知 | 毎日 0:00 |
+| `job_research_batch` | 志望業界の新着ニュースをWeb検索・Discord 通知 | **停止中**（2026-09-01〜。`schedulers/scheduler.py` でコメントアウト。チャットでの手動実行は可） |
 | `notion_todo_sync` | Supabase → Notion の未同期 ToDo を同期 | 毎日 0:00 |
 | `credit_check` | Anthropic クレジット残高アラート | 1 時間ごと |
 

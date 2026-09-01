@@ -33,15 +33,17 @@ def setup(bot: discord.Client) -> AsyncIOScheduler:
         coalesce=True,
     )
 
-    # 就活リサーチ（深夜0時）— misfire_grace_time で数秒のズレでもスキップされないように
-    scheduler.add_job(
-        _run_job_research,
-        CronTrigger(hour=0, minute=0, timezone=tz),
-        args=[bot],
-        id="job_research_batch",
-        misfire_grace_time=3600,
-        coalesce=True,
-    )
+    # 就活リサーチ（深夜0時）— 自動実行は停止中（2026-09-01〜）。
+    # チャットで「就活リサーチ実行して」と話しかければ check_job_research ツール経由で手動実行は引き続き可能。
+    # 再開する場合は以下のコメントを外す。
+    # scheduler.add_job(
+    #     _run_job_research,
+    #     CronTrigger(hour=0, minute=0, timezone=tz),
+    #     args=[bot],
+    #     id="job_research_batch",
+    #     misfire_grace_time=3600,
+    #     coalesce=True,
+    # )
 
     # クレジット残高チェック（1時間ごと）
     scheduler.add_job(
