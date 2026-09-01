@@ -10,7 +10,7 @@ DISCORD_REPORT_CHANNEL_ID = int(os.environ["DISCORD_REPORT_CHANNEL_ID"])
 DISCORD_TODO_CHANNEL_ID = int(os.environ["DISCORD_TODO_CHANNEL_ID"])
 
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5")
 CLAUDE_HAIKU_MODEL = os.getenv("CLAUDE_HAIKU_MODEL", "claude-haiku-4-5-20251001")
 
 GOOGLE_CREDENTIALS_PATH = os.getenv("GOOGLE_CREDENTIALS_PATH", "credentials/google_credentials.json")
