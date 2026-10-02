@@ -298,6 +298,15 @@ TOOLS = [
 _client: anthropic.AsyncAnthropic | None = None
 
 
+def _response_text(response) -> str:
+    """応答から text ブロックだけを連結して返す。
+    モデルによっては先頭に thinking ブロックが付くため content[0].text と決め打ちしない。"""
+    return "".join(
+        b.text for b in response.content
+        if getattr(b, "type", None) == "text" and getattr(b, "text", None)
+    ).strip()
+
+
 def get_client() -> anthropic.AsyncAnthropic:
     global _client
     if _client is None:
@@ -559,7 +568,7 @@ async def chat(user_message: str, conversation_history: list[dict] | None = None
         system=_system_block(system_prompt),
         messages=messages,
     )
-    return response.content[0].text.strip()
+    return _response_text(response)
 
 
 # ---------------------------------------------------------------------------
@@ -598,7 +607,7 @@ async def parse_datetime_natural(date_expr: str, now_jst: datetime) -> datetime:
         messages=[{"role": "user", "content": prompt}],
     )
 
-    text = response.content[0].text.strip()
+    text = _response_text(response)
     parsed = _extract_json(text)
     _datetime_cache[cache_key] = parsed["datetime"]
     return datetime.fromisoformat(parsed["datetime"])
@@ -697,7 +706,7 @@ async def generate_daily_report(
         system=_system_block(_CHARACTER),
         messages=[{"role": "user", "content": prompt}],
     )
-    return response.content[0].text.strip()
+    return _response_text(response)
 
 
 async def score_job_emails(emails: list[dict], career_goal: str) -> list[dict]:
@@ -759,7 +768,7 @@ JSON配列で返してください（他のテキスト不要）:
             messages=[{"role": "user", "content": prompt}],
         )
 
-        text = response.content[0].text.strip()
+        text = _response_text(response)
         print(f"[score_job_emails] batch {batch_start}〜{batch_start + len(batch) - 1}: {text[:300]}")
 
         try:
@@ -868,7 +877,7 @@ async def analyze_job_email(subject: str, sender: str, body: str, career_goal: s
         max_tokens=600,
         messages=[{"role": "user", "content": prompt}],
     )
-    text = response.content[0].text.strip()
+    text = _response_text(response)
     try:
         return _extract_json(text)
     except Exception:
