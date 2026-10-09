@@ -3,7 +3,7 @@ import re
 import discord
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
-from services import gmail_service, claude_service, supabase_service, google_tasks_service
+from services import gmail_service, claude_service, db_service, google_tasks_service
 from config import DISCORD_EMAIL_CHANNEL_ID, TIMEZONE, GMAIL_JOB_LABEL
 
 # channel_id -> list of todo candidates waiting for user selection
@@ -28,7 +28,7 @@ def _is_bare_selection(content: str) -> bool:
 
 
 def _get_threshold() -> int:
-    profile = supabase_service.get_user_profile()
+    profile = db_service.get_user_profile()
     return int((profile.get("preferences") or {}).get("email_score_threshold", _DEFAULT_THRESHOLD))
 
 
@@ -40,7 +40,7 @@ async def run_batch(bot: discord.Client) -> None:
 
     now = datetime.now(_TZ)
     today_str = f"{now.month}月{now.day}日"
-    profile = supabase_service.get_user_profile()
+    profile = db_service.get_user_profile()
     career_goal = profile.get("career_goal", "")
 
     # Step 1: 件名・送信者のみ取得（本文なし）
@@ -88,7 +88,7 @@ async def run_batch(bot: discord.Client) -> None:
     results = []
     todo_candidates: list[dict] = []
     for email in high_priority:
-        already = await asyncio.to_thread(supabase_service.is_email_logged, email["id"])
+        already = await asyncio.to_thread(db_service.is_email_logged, email["id"])
         if not already:
             body = await asyncio.to_thread(gmail_service.get_email_body, email["id"])
 
@@ -109,7 +109,7 @@ async def run_batch(bot: discord.Client) -> None:
                 email_todos = []
 
             await asyncio.to_thread(
-                supabase_service.save_email_log,
+                db_service.save_email_log,
                 email["id"], email["sender"], email["subject"],
                 "高" if email["score"] == 5 else "中",
                 summary_data.get("summary", ""),
@@ -192,7 +192,7 @@ async def handle_todo_confirmation(channel: discord.TextChannel, content: str) -
     for i in selected_indices:
         todo = todos[i]
         saved = await asyncio.to_thread(
-            supabase_service.add_email_todo,
+            db_service.add_email_todo,
             todo["title"], todo.get("due_date"), todo["source_id"], todo["score"],
         )
         if saved:

@@ -78,7 +78,7 @@ handlers/
 
 services/
 ├── claude_service.py     → Anthropic API 呼び出し・Tool 定義・各種プロンプト
-├── supabase_service.py   → DB アクセス（TTL キャッシュ付き）
+├── db_service.py         → ローカル SQLite アクセス（旧 Supabase。キャッシュなし）
 ├── gmail_service.py      → Gmail API（読み取り専用）
 ├── calendar_service.py   → Google Calendar API
 └── notion_service.py     → Notion API
@@ -91,7 +91,8 @@ services/
 | `daily_report` | 日次レポート生成・Discord 送信 | 毎日 0:00（`DAILY_REPORT_HOUR` / `DAILY_REPORT_MINUTE` で変更可） |
 | `job_email_batch` | 就活メール取得・スコアリング・Discord 通知 | 毎日 0:00 |
 | `job_research_batch` | 志望業界の新着ニュースをWeb検索・Discord 通知 | **停止中**（2026-09-01〜。`schedulers/scheduler.py` でコメントアウト。チャットでの手動実行は可） |
-| `notion_todo_sync` | Supabase → Notion の未同期 ToDo を同期 | 毎日 0:00 |
+| `notion_todo_sync` | DB → Notion の未同期 ToDo を同期 | 毎日 0:00 |
+| `db_backup` | SQLite のスナップショットを `data/backups/` に作成（14世代保持） | 毎日 3:30 |
 | `credit_check` | Anthropic クレジット残高アラート | 1 時間ごと |
 
 `daily_report` / `job_email_batch` / `job_research_batch` はいずれも `misfire_grace_time=3600, coalesce=True` 設定済み。  
@@ -110,7 +111,7 @@ bot が 0:00 以降に起動し、かつ当日未送信なら日次レポート�
 ```
 on_message
  └─ message_handler._handle_inner
-      ├─ _load_history_if_needed  (Supabase から会話履歴を復元、初回のみ)
+      ├─ _load_history_if_needed  (DB から会話履歴を復元、初回のみ)
       ├─ _get_history              (直近 12 件をサニタイズ)
       ├─ claude_service.chat_with_tools(content, history)
       │    └─ Anthropic API 1 回のコールで意図判定 + ツール選択
@@ -119,12 +120,12 @@ on_message
            ├─ _dispatch_tool → 各 handler/service を呼ぶ
            ├─ history に user(tool_result) を追加
            ├─ history に assistant(サマリー文字列) を追加
-           └─ Supabase に会話履歴を保存
+           └─ DB に会話履歴を保存
 ```
 
 ## 会話履歴の構造
 
-インメモリ（`_conversation_history: dict[int, list[dict]]`）+ Supabase に永続化。
+インメモリ（`_conversation_history: dict[int, list[dict]]`）+ SQLite に永続化。
 
 ```
 user(str)                       # ユーザー発話
@@ -137,7 +138,19 @@ assistant(str)                  # ツール結果のサマリー（APIコール�
 `assistant_content` には実行する 1 件の `tool_use` のみ含める（複数返ってきた場合は最初の 1 件に絞る）。  
 `_sanitize_history` と `chat_with_tools` 内のクリーンアップは両方、全 `tool_use` ID が対応 `tool_result` を持つかを検証してから保存。
 
-## Supabase テーブル
+## DB（ローカル SQLite）
+
+2026-10 に Supabase（Free プランの自動一時停止で2回止まった）から移行した。
+bot は単一プロセスで DB に触るのも bot だけなので、外部 DB を使う利点が無かったため。
+
+| 項目 | 内容 |
+|---|---|
+| DB ファイル | `data/ai_secretary.db`（WSL2 では `/home/kaliman/ai-secretary/data/`）。`DB_PATH` で変更可 |
+| git 管理 | **対象外**（`data/` は `.gitignore`。個人情報を含むので絶対にコミットしない） |
+| 置き場所の注意 | **WSL2 の ext4 上に置く**。`/mnt/c` 配下は WAL のロックが不安定 |
+| 接続 | 呼び出しごとに開閉 + WAL + busy timeout 30 秒（`asyncio.to_thread` の複数スレッドから安全） |
+| スキーマ | `services/db_service.py` の `_SCHEMA`（初回アクセス時に `CREATE TABLE IF NOT EXISTS` で自動作成） |
+| バックアップ | 毎日 3:30 に `data/backups/` へ 14 世代（`db_service.backup()`）。**同じ PC 内なのでディスク故障には無力**。PC 外へのコピーは手動（下記） |
 
 | テーブル | 用途 |
 |---|---|
@@ -151,7 +164,31 @@ assistant(str)                  # ツール結果のサマリー（APIコール�
 | `event_logs` | カレンダー登録ログ |
 | `research_logs` | 就活リサーチで通知済みの記事 URL ログ（重複防止用）|
 
-`supabase_service` は `user_profile` / `custom_rules` / `contacts` に TTL 5 分のインメモリキャッシュを持つ。
+- 旧 `supabase_service` とは関数名・引数・戻り値の形が同じ。`done` / `synced_to_notion` は `bool`、`preferences` / `messages` は `dict` / `list` で返る。
+- `todos.priority` は常に文字列（メール由来のスコア `5` も `"5"` で保存される）。
+- 以前あった TTL キャッシュは廃止した（ローカル DB では不要。別プロセスのスクリプトと値がズレる原因にもなるため）。
+- DB を触る手動テストは **別プロセスから安全に実行できる**（WAL なので bot の稼働中でも読み書き可）。ただし `_pending_todos` 等のメモリ上の状態は共有されない点に注意。
+
+### PC 外へのバックアップ（手動）
+
+```bash
+# Mac のターミナルから（SSH のパスワード入力あり）。bot 稼働中でも整合性のあるスナップショットが取れる
+scp -r kaliman@100.114.106.16:~/ai-secretary/data/backups ~/Downloads/ai-secretary-backups
+```
+
+### 復旧（DB が壊れた / 消えた場合）
+
+```bash
+sudo systemctl stop ai-secretary
+cd ~/ai-secretary/data && rm -f ai_secretary.db ai_secretary.db-wal ai_secretary.db-shm
+cp backups/<復元したいファイル>.db ai_secretary.db
+sudo systemctl start ai-secretary
+```
+
+### Supabase からの移行（記録）
+
+`scripts/migrate_supabase_to_sqlite.py`（1回きり。Supabase は読み取りのみ・全体を1トランザクション・件数不一致ならロールバック）。
+旧 Supabase プロジェクトのデータは移行後もしばらく残しておく（ロールバック用。不要になったらダッシュボードで削除）。
 
 ## 就活メールバッチ処理（5 ステップ）
 
@@ -177,7 +214,7 @@ assistant(str)                  # ツール結果のサマリー（APIコール�
 5. 新着・リマインド分をまとめて ToDo 候補として番号付きで提示（`job_email_handler` と同じ UX）。ユーザーが番号選択すると `todos`（`source="research"`）+ Google Tasks に締切日時（23:59）付きで登録される
 
 `priorities` が未設定の場合は「IT・Web業界」をデフォルトの検索対象とする。
-`supabase_service.has_research_todo(url)` で ToDo 化済みかどうかを判定する（`todos.source_id` = URL）。
+`db_service.has_research_todo(url)` で ToDo 化済みかどうかを判定する（`todos.source_id` = URL）。
 
 **手動実行**: Discordで「就活リサーチ実行して」等と話しかけると `check_job_research` ツール経由で即時実行できる（`check_job_email` と同じ仕組み）。
 「大手ゲーム会社のインターン締切を調べて」のように対象を具体的に指定すると、`topic` としてプロフィールの志望業界の代わりに使われ、結果は指示したチャンネルにそのまま返信される（毎日0時の自動バッチは従来通り就活リサーチチャンネル＋プロフィールの志望業界）。

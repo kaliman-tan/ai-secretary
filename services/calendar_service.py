@@ -58,8 +58,8 @@ def create_event(title: str, start_dt: datetime, end_dt: datetime, description: 
     created = service.events().insert(calendarId="primary", body=event_body).execute()
     google_event_id = created["id"]
 
-    from services import supabase_service
-    supabase_service.save_event_log(
+    from services import db_service
+    db_service.save_event_log(
         title=title,
         start_datetime=start_dt.isoformat(),
         end_datetime=end_dt.isoformat(),

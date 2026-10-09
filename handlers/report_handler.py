@@ -5,7 +5,7 @@ import os
 import tempfile
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from services import claude_service, supabase_service, calendar_service, notion_service, google_tasks_service
+from services import claude_service, db_service, calendar_service, notion_service, google_tasks_service
 from config import DISCORD_REPORT_CHANNEL_ID, TIMEZONE, ANTHROPIC_CURRENT_CREDITS, ANTHROPIC_MONTHLY_USED, ANTHROPIC_DAILY_AVG
 
 _SENT_DATE_FILE = os.path.join(tempfile.gettempdir(), "ai_secretary_report_sent.txt")
@@ -65,7 +65,7 @@ async def _generate_and_post_inner(bot: discord.Client, discord_summary: str = "
 
     # データを並列取得
     emails, todos, gcal_events, notion_events = await asyncio.gather(
-        asyncio.to_thread(supabase_service.get_recent_email_logs, 10),
+        asyncio.to_thread(db_service.get_recent_email_logs, 10),
         asyncio.to_thread(google_tasks_service.get_tasks),
         _fetch_gcal_events(),
         _fetch_notion_events(),

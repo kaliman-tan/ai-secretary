@@ -3,7 +3,7 @@ import re
 import discord
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
-from services import claude_service, supabase_service, google_tasks_service
+from services import claude_service, db_service, google_tasks_service
 from config import DISCORD_JOB_RESEARCH_CHANNEL_ID, TIMEZONE
 
 _TZ = ZoneInfo(TIMEZONE)
@@ -51,7 +51,7 @@ async def run_batch(
     if topic:
         target_hint = topic
     else:
-        profile = await asyncio.to_thread(supabase_service.get_user_profile)
+        profile = await asyncio.to_thread(db_service.get_user_profile)
         target_hint = profile.get("priorities", "")
 
     try:
@@ -67,13 +67,13 @@ async def run_batch(
         if not url:
             continue
 
-        logged = await asyncio.to_thread(supabase_service.is_research_logged, url)
+        logged = await asyncio.to_thread(db_service.is_research_logged, url)
         if not logged:
             new_items.append(it)
             continue
 
         # 既出だが、ToDo化されておらず締切が近いものはリマインド対象にする
-        already_added = await asyncio.to_thread(supabase_service.has_research_todo, url)
+        already_added = await asyncio.to_thread(db_service.has_research_todo, url)
         if already_added:
             continue
         days_left = _days_until(it.get("deadline"))
@@ -86,7 +86,7 @@ async def run_batch(
 
     for it in new_items:
         await asyncio.to_thread(
-            supabase_service.save_research_log,
+            db_service.save_research_log,
             it["url"], _fmt_item_title(it), it.get("summary", ""),
         )
 
@@ -157,7 +157,7 @@ async def handle_todo_confirmation(channel: discord.TextChannel, content: str) -
         it = items[i]
         due_iso = (it["deadline"] + "T23:59:00+09:00") if it.get("deadline") else None
         saved = await asyncio.to_thread(
-            supabase_service.add_research_todo,
+            db_service.add_research_todo,
             _fmt_item_title(it), it.get("deadline"), it["url"], "high" if it.get("deadline") else "normal",
         )
         if saved:

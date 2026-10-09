@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -19,8 +20,12 @@ GOOGLE_TOKEN_PATH = os.getenv("GOOGLE_TOKEN_PATH", "credentials/google_token.jso
 NOTION_API_KEY = os.environ["NOTION_API_KEY"]
 NOTION_CALENDAR_DATABASE_ID = os.environ["NOTION_CALENDAR_DATABASE_ID"]
 
-SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+# ローカル SQLite（WSL2 の ext4 上に置くこと。/mnt/c 配下は WAL のロックが不安定）
+DB_PATH = os.getenv("DB_PATH", str(Path(__file__).resolve().parent / "data" / "ai_secretary.db"))
+
+# 旧 DB（Supabase）。scripts/migrate_supabase_to_sqlite.py 専用。移行後は不要
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Tokyo")
 DAILY_REPORT_HOUR = int(os.getenv("DAILY_REPORT_HOUR", "0"))

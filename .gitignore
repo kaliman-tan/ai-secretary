@@ -6,6 +6,12 @@ credentials/
 # ログ
 *.log
 
+# ローカルDB（個人情報を含むので絶対にコミットしない）
+data/
+*.db
+*.db-wal
+*.db-shm
+
 # Python
 __pycache__/
 *.py[cod]

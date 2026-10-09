@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import discord
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -7,6 +9,9 @@ from config import (
     ANTHROPIC_CURRENT_CREDITS, ANTHROPIC_DAILY_AVG, DISCORD_CREDIT_CHANNEL_ID,
 )
 from handlers import report_handler, job_email_handler, job_research_handler
+from services import db_service
+
+logger = logging.getLogger(__name__)
 
 
 def setup(bot: discord.Client) -> AsyncIOScheduler:
@@ -45,6 +50,15 @@ def setup(bot: discord.Client) -> AsyncIOScheduler:
     #     coalesce=True,
     # )
 
+    # DBバックアップ（毎日 3:30）— data/backups/ に14世代まで保持
+    scheduler.add_job(
+        _run_db_backup,
+        CronTrigger(hour=3, minute=30, timezone=tz),
+        id="db_backup",
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
+
     # クレジット残高チェック（1時間ごと）
     scheduler.add_job(
         _run_credit_check,
@@ -55,6 +69,11 @@ def setup(bot: discord.Client) -> AsyncIOScheduler:
     )
 
     return scheduler
+
+
+async def _run_db_backup() -> None:
+    path = await asyncio.to_thread(db_service.backup)
+    logger.info(f"[db_backup] スナップショット作成: {path.name}")
 
 
 async def _run_job_email_batch(bot: discord.Client) -> None:

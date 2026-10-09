@@ -2,7 +2,7 @@ import anthropic
 import asyncio
 import logging
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, CLAUDE_HAIKU_MODEL
-from services import supabase_service
+from services import db_service
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import json
@@ -404,7 +404,7 @@ def _build_system_prompt() -> str:
     now = datetime.now(ZoneInfo("Asia/Tokyo"))
     now_str = f"{now.strftime('%Y年%m月%d日')}（{_WEEKDAYS[now.weekday()]}）{now.strftime('%H時台')} JST"
 
-    profile = supabase_service.get_user_profile()
+    profile = db_service.get_user_profile()
     prompt = _CHARACTER + f"\n\n## 現在日時\n{now_str}"
 
     if profile:
@@ -710,7 +710,7 @@ async def generate_daily_report(
 
 
 async def score_job_emails(emails: list[dict], career_goal: str) -> list[dict]:
-    profile = supabase_service.get_user_profile()
+    profile = db_service.get_user_profile()
     priorities = profile.get("priorities") or "未設定"
     preferences = profile.get("preferences") or {}
     traits = profile.get("traits") or "未設定"

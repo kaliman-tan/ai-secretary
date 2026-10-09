@@ -4,7 +4,7 @@ import logging
 import anthropic
 from datetime import datetime, timedelta, date as date_t
 from zoneinfo import ZoneInfo
-from services import claude_service, supabase_service, calendar_service, notion_service, google_tasks_service
+from services import claude_service, db_service, calendar_service, notion_service, google_tasks_service
 from handlers import todo_handler
 from config import TIMEZONE
 
@@ -36,7 +36,7 @@ async def _load_history_if_needed(channel_id: int) -> None:
         return
     _history_loaded.add(channel_id)
     try:
-        messages = await asyncio.to_thread(supabase_service.get_conversation_history, channel_id)
+        messages = await asyncio.to_thread(db_service.get_conversation_history, channel_id)
         if messages:
             _conversation_history[channel_id] = _sanitize_history(messages)
     except Exception:
@@ -46,7 +46,7 @@ async def _load_history_if_needed(channel_id: int) -> None:
 async def _save_history(channel_id: int) -> None:
     try:
         messages = _conversation_history.get(channel_id, [])
-        await asyncio.to_thread(supabase_service.save_conversation_history, channel_id, messages)
+        await asyncio.to_thread(db_service.save_conversation_history, channel_id, messages)
     except Exception:
         logger.warning(f"[history] Supabaseへの履歴保存に失敗: channel={channel_id}")
 
@@ -295,7 +295,7 @@ async def _dispatch_tool(
 
     elif name == "add_rule":
         await asyncio.to_thread(
-            supabase_service.add_custom_rule,
+            db_service.add_custom_rule,
             inputs["rule_type"], inputs["target"], inputs["action"],
         )
         await channel.send(
@@ -305,7 +305,7 @@ async def _dispatch_tool(
 
     elif name == "add_contact":
         await asyncio.to_thread(
-            supabase_service.upsert_contact,
+            db_service.upsert_contact,
             email=inputs["email"], name=inputs["name"],
         )
         await channel.send(f"✅ 連絡先を登録したよ！ **{inputs['name']}** ({inputs['email']})")
@@ -458,7 +458,7 @@ async def _handle_profile_update(channel: discord.TextChannel, fields: dict) -> 
     if threshold is not None:
         updates["preferences"] = {"email_score_threshold": int(threshold)}
 
-    await asyncio.to_thread(supabase_service.merge_user_profile, updates)
+    await asyncio.to_thread(db_service.merge_user_profile, updates)
 
     saved_keys = [k for k, v in {
         "名前": fields.get("name"),
