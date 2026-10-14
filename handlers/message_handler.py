@@ -1,6 +1,9 @@
 import asyncio
 import discord
+import json
 import logging
+import re
+import time
 import anthropic
 from datetime import datetime, timedelta, date as date_t
 from zoneinfo import ZoneInfo
@@ -16,10 +19,11 @@ _WEEKDAY_NAMES = ["月", "火", "水", "木", "金", "土", "日"]
 # channel_id -> list[{"role": ..., "content": ...}]
 _conversation_history: dict[int, list[dict]] = {}
 _MAX_HISTORY = 20
-_history_loaded: set[int] = set()  # Supabaseから読み込み済みのchannel_id
+_history_loaded: set[int] = set()  # DBから読み込み済みのchannel_id
 
-# channel_id -> {title, start_dt, end_dt} : 確認待ちイベント
-_pending_events: dict[int, dict] = {}
+# channel_id -> [{title, start_dt, end_dt, created}] : 確認待ちイベント（複数可。「OK」でまとめて登録）
+_pending_events: dict[int, list[dict]] = {}
+_PENDING_EVENT_TTL = 3600  # 秒。これより古い確認待ちは無効にする（後日の無関係な「OK」で登録されないように）
 
 # channel_id -> {task_id, title} : 実施日時の回答待ちタスク
 _pending_task_dates: dict[int, dict] = {}
@@ -27,8 +31,40 @@ _pending_task_dates: dict[int, dict] = {}
 # ツール結果をClaudeに返して最終応答を生成するツール群
 _QUERY_TOOLS = {"list_todos", "list_events"}
 
-_CONFIRM_WORDS = {"ok", "はい", "いいよ", "うん", "よし", "お願い", "登録して", "確定", "yes", "おk", "おけ", "おっけ", "おっけー"}
-_CANCEL_WORDS = {"キャンセル", "やめ", "いや", "no", "取り消し", "やめて"}
+# ユーザーの返事を待つツール。実行後はループを止め、Claude に追加の文を書かせない
+_AWAIT_REPLY_TOOLS = {"add_event"}
+
+# 操作系ツールのあと、Claude に「追加で伝えることは無い」を表させる印（送信せずに捨てる）
+_NOTHING_TO_ADD = "（なし）"
+
+# 確認待ち・回答待ちへの返事として扱うのは「その語だけ」の返事に限る（記号・絵文字・空白は無視）。
+# 部分一致にすると「これも登録してほしい」や「参加登録をお願いします」を含む長文まで確定扱いになる。
+_CONFIRM_REPLIES = {
+    "ok", "okです", "okay", "yes", "はい", "うん", "いいよ", "いいね", "よし", "おけ", "おk", "おっけ", "おっけー",
+    "お願い", "おねがい", "お願いします", "登録して", "登録", "確定", "確定して", "それで", "それでok",
+    "それでお願い", "大丈夫", "だいじょうぶ",
+}
+_CANCEL_REPLIES = {
+    "no", "いや", "いいえ", "キャンセル", "キャンセルして", "やめ", "やめて", "やめる", "取り消し", "取り消して",
+    "なし", "いらない",
+}
+_SKIP_DATE_REPLIES = {
+    "あとで", "後で", "あとでいい", "あとでやる", "あとで決める", "まだ", "まだ決めてない", "決めてない",
+    "未定", "わからない", "わかんない", "skip", "スキップ", "なし", "パス",
+}
+# 日時の修正・回答として扱う短い返事の目印（「16時に変えて」「明日の朝」など）
+_DATETIME_HINT = re.compile(
+    r"[0-9０-９]|今日|明日|明後日|あさって|今週|来週|再来週|[月火水木金土日]曜|午前|午後|朝|昼|夕方|夜|時|分|半"
+)
+_SHORT_REPLY_MAX = 30
+
+
+def _norm_reply(text: str) -> str:
+    return re.sub(r"[\W_]+", "", text.lower())
+
+
+def _looks_like_datetime_reply(text: str) -> bool:
+    return len(text.strip()) <= _SHORT_REPLY_MAX and bool(_DATETIME_HINT.search(text))
 
 
 async def _load_history_if_needed(channel_id: int) -> None:
@@ -40,7 +76,7 @@ async def _load_history_if_needed(channel_id: int) -> None:
         if messages:
             _conversation_history[channel_id] = _sanitize_history(messages)
     except Exception:
-        logger.warning(f"[history] Supabaseからの履歴読み込みに失敗: channel={channel_id}")
+        logger.warning(f"[history] DBからの履歴読み込みに失敗: channel={channel_id}")
 
 
 async def _save_history(channel_id: int) -> None:
@@ -48,7 +84,7 @@ async def _save_history(channel_id: int) -> None:
         messages = _conversation_history.get(channel_id, [])
         await asyncio.to_thread(db_service.save_conversation_history, channel_id, messages)
     except Exception:
-        logger.warning(f"[history] Supabaseへの履歴保存に失敗: channel={channel_id}")
+        logger.warning(f"[history] DBへの履歴保存に失敗: channel={channel_id}")
 
 
 def _push_message(channel_id: int, message: dict) -> None:
@@ -141,9 +177,13 @@ async def _handle_inner(message: discord.Message, bot: discord.Client) -> None:
     channel = message.channel
     channel_id = channel.id
 
-    # 確認待ちイベントがあれば最優先で処理
-    if channel_id in _pending_events:
-        await _handle_event_confirmation(channel, content)
+    # 初回アクセス時にDBから履歴を復元（確認待ちへの返事も履歴に残すので最初に読む）
+    await _load_history_if_needed(channel_id)
+
+    # 確認待ちイベントへの返事（「OK」「キャンセル」「16時に変えて」等）。該当しなければ通常の会話へ
+    reply = await _handle_event_confirmation(channel, content)
+    if reply is not None:
+        await _record_exchange(channel_id, content, reply)
         return
 
     # ToDo候補の選択待ちがあれば処理（番号選択に見えないメッセージは通常会話にフォールバック）
@@ -155,13 +195,11 @@ async def _handle_inner(message: discord.Message, bot: discord.Client) -> None:
         if await job_research_handler.handle_todo_confirmation(channel, content):
             return
 
-    # タスク実施日時の回答待ちがあれば処理
-    if channel_id in _pending_task_dates:
-        await _handle_task_date_response(channel, content)
+    # タスク実施日時への返事。日時でない話題なら質問を取り下げて通常の会話へ
+    reply = await _handle_task_date_response(channel, content)
+    if reply is not None:
+        await _record_exchange(channel_id, content, reply)
         return
-
-    # 初回アクセス時にSupabaseから履歴を復元
-    await _load_history_if_needed(channel_id)
 
     # Tool Use で意図判定と応答を1コールで解決
     history = _get_history(channel_id)
@@ -172,17 +210,34 @@ async def _handle_inner(message: discord.Message, bot: discord.Client) -> None:
     _MAX_TOOL_CALLS = 5
     tool_call_count = 0
     final_text_sent = False
+    last_tool_summary: str | None = None
+    executed: set[str] = set()
 
     while result["type"] == "tool_use" and tool_call_count < _MAX_TOOL_CALLS:
+        signature = f"{result['name']}:{json.dumps(result['input'], ensure_ascii=False, sort_keys=True)}"
+        if tool_call_count > 0 and (result["name"] in _QUERY_TOOLS or signature in executed):
+            # 操作のあとに続く一覧表示（頼まれていない確認）や、同じ操作の繰り返し（重複追加）は実行しない
+            break
+        executed.add(signature)
         tool_call_count += 1
         # アシスタントのtool_useブロックを正規APIフォーマットで記録
         _push_message(channel_id, {"role": "assistant", "content": result["assistant_content"]})
         summary = await _dispatch_tool(channel, bot, result["name"], result["input"])
         result_text = summary or "実行完了"
+        last_tool_summary = result_text
+        tool_result_text = result_text
+        if result["name"] not in _QUERY_TOOLS | _AWAIT_REPLY_TOOLS:
+            # 操作系ツールはツール側で報告を送信済み。Claude が同じ報告を繰り返して二重送信にならないようにする
+            tool_result_text += (
+                "\n（この結果はユーザーに送信済み。同じ報告を繰り返さないこと。"
+                "ユーザーの依頼のうち未実行のものがあればそれだけ続けて実行する。"
+                "ユーザーの質問や相談にまだ答えていなければ答える。"
+                f"それ以外に伝えることが無ければ「{_NOTHING_TO_ADD}」とだけ返す）"
+            )
         # tool_resultをuserメッセージとして記録
         _push_message(channel_id, {
             "role": "user",
-            "content": [{"type": "tool_result", "tool_use_id": result["tool_use_id"], "content": result_text}],
+            "content": [{"type": "tool_result", "tool_use_id": result["tool_use_id"], "content": tool_result_text}],
         })
         if result["name"] in _QUERY_TOOLS and result["input"].get("user_question"):
             # user_questionがある場合のみClaudeで最終応答を生成（分析・アドバイスが必要）
@@ -198,16 +253,32 @@ async def _handle_inner(message: discord.Message, bot: discord.Client) -> None:
             _push_history(channel_id, "assistant", result_text)
             final_text_sent = True
             break
+        elif result["name"] in _AWAIT_REPLY_TOOLS:
+            # 確認メッセージは送信済みで、ユーザーの返事を待つ。Claude に状況説明を書かせない
+            _push_history(channel_id, "assistant", result_text)
+            final_text_sent = True
+            break
         else:
-            # アクション系ツール: 次のアクションをClaudeに判断させる
+            # アクション系ツール: 残りの依頼があれば続けて実行させる
             result = await claude_service.chat_with_tools(None, _get_history(channel_id))
 
     if not final_text_sent:
-        if result["type"] == "text" and result["text"]:
-            _push_history(channel_id, "assistant", result["text"])
-            await channel.send(result["text"])
+        text = result.get("text", "") if result["type"] == "text" else ""
+        if text and _norm_reply(text) != _norm_reply(_NOTHING_TO_ADD):
+            _push_history(channel_id, "assistant", text)
+            await channel.send(text)
+        elif last_tool_summary:
+            # Claude が追加で書くことが無かった場合も、履歴は assistant(要約) で閉じておく（送信はしない）
+            _push_history(channel_id, "assistant", last_tool_summary)
 
-    # 履歴をSupabaseに保存（awaitで競合状態を防ぐ）
+    # 履歴をDBに保存（awaitで競合状態を防ぐ）
+    await _save_history(channel_id)
+
+
+async def _record_exchange(channel_id: int, user_text: str, bot_text: str) -> None:
+    """ツールを通らないやり取り（確認待ちへの返事など）も履歴に残す。後から「さっきの」で参照できるように。"""
+    _push_history(channel_id, "user", user_text)
+    _push_history(channel_id, "assistant", bot_text)
     await _save_history(channel_id)
 
 
@@ -258,8 +329,8 @@ async def _dispatch_tool(
             return "未完了のタスクはありません。"
 
     elif name == "add_event":
-        await _handle_add_event_with_confirm(channel, inputs)
-        return f"予定登録の確認待ち: 「{inputs.get('title')}」 {inputs.get('start_iso', '')}"
+        # 送った確認メッセージそのものを結果にする（次のターンで Claude がユーザーと同じ文面を見られる）
+        return await _handle_add_event_with_confirm(channel, inputs)
 
     elif name == "list_events":
         try:
@@ -340,104 +411,144 @@ async def _dispatch_tool(
 # Event registration with confirmation
 # ---------------------------------------------------------------------------
 
-async def _handle_add_event_with_confirm(channel: discord.TextChannel, inputs: dict) -> None:
-    title = inputs.get("title") or "新しい予定"
-    start_iso = inputs.get("start_iso")
+def _fmt_event_range(p: dict) -> str:
+    start, end = p["start_dt"], p["end_dt"]
+    weekday = _WEEKDAY_NAMES[start.weekday()]
+    return f"{start.strftime('%m/%d')}（{weekday}）{start.strftime('%H:%M')}〜{end.strftime('%H:%M')}"
 
-    if start_iso:
-        start_dt = datetime.fromisoformat(start_iso)
+
+def _live_pending_events(channel_id: int) -> list[dict]:
+    """期限切れを除いた確認待ちイベントを返す（全部切れていればエントリごと消す）。"""
+    now = time.monotonic()
+    live = [p for p in _pending_events.get(channel_id, []) if now - p["created"] < _PENDING_EVENT_TTL]
+    if live:
+        _pending_events[channel_id] = live
     else:
+        _pending_events.pop(channel_id, None)
+    return live
+
+
+async def _handle_add_event_with_confirm(channel: discord.TextChannel, inputs: dict) -> str:
+    """確認待ちに追加して確認メッセージを送り、その文面を返す。
+
+    既に確認待ちがあれば上書きせず並べて一緒に確認する。同じタイトルは時刻の修正とみなして置き換える。
+    """
+    title = inputs.get("title") or "新しい予定"
+    start_dt = _parse_iso(inputs.get("start_iso"))
+    if start_dt is None:
         now_jst = datetime.now(_TZ)
         start_dt = (now_jst + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+    end_dt = _parse_iso(inputs.get("end_iso"))
+    if end_dt is None or end_dt <= start_dt:
+        end_dt = start_dt + timedelta(hours=1)
 
-    end_dt = start_dt + timedelta(hours=1)
-    weekday = _WEEKDAY_NAMES[start_dt.weekday()]
+    pending = [p for p in _live_pending_events(channel.id) if p["title"] != title]
+    pending.append({"title": title, "start_dt": start_dt, "end_dt": end_dt, "created": time.monotonic()})
+    _pending_events[channel.id] = pending
 
-    _pending_events[channel.id] = {"title": title, "start_dt": start_dt, "end_dt": end_dt}
-
-    await channel.send(
-        f"📅 {start_dt.strftime('%m/%d')}（{weekday}）{start_dt.strftime('%H:%M')} に "
-        f"**{title}** を登録するね！\n"
-        f"OKなら「OK」、日時が違ったら修正内容を教えてっ！"
-    )
-
-
-async def _handle_event_confirmation(channel: discord.TextChannel, content: str) -> None:
-    pending = _pending_events[channel.id]
-    lower = content.lower().strip()
-
-    if any(w in lower for w in _CONFIRM_WORDS):
-        del _pending_events[channel.id]
-        await _execute_event_registration(channel, pending["title"], pending["start_dt"], pending["end_dt"])
-        return
-
-    if any(w in content for w in _CANCEL_WORDS):
-        del _pending_events[channel.id]
-        await channel.send("わかった！キャンセルしたよ！また教えてね！")
-        return
-
-    # 修正として再解釈（parse_datetime_natural は確認フロー修正時のみ使用）
-    now_jst = datetime.now(_TZ)
-    try:
-        new_dt = await claude_service.parse_datetime_natural(content, now_jst)
-        pending["start_dt"] = new_dt
-        pending["end_dt"] = new_dt + timedelta(hours=1)
-        _pending_events[channel.id] = pending
-        weekday = _WEEKDAY_NAMES[new_dt.weekday()]
-        await channel.send(
-            f"📅 {new_dt.strftime('%m/%d')}（{weekday}）{new_dt.strftime('%H:%M')} に修正したよ！\n"
-            f"これでOK？「OK」で確定！"
+    if len(pending) == 1:
+        msg = (
+            f"📅 {_fmt_event_range(pending[0])} に **{title}** を登録するね！\n"
+            f"OKなら「OK」、日時が違ったら修正内容を教えてっ！"
         )
-    except Exception:
-        await channel.send(
-            "うーん、うまく読み取れなかった…\n"
-            "「OK」で確定、「キャンセル」でやめられるよ！"
+    else:
+        lines = "\n".join(f"・{_fmt_event_range(p)} **{p['title']}**" for p in pending)
+        msg = (
+            f"📅 確認待ちの予定が{len(pending)}件あるよ！まとめて登録するね！\n{lines}\n"
+            f"「OK」で全部登録、「キャンセル」で全部やめるよ！"
+            f"片方だけにしたいときは「キャンセル」してから、登録したい方をもう一度送ってね！"
         )
+    await channel.send(msg)
+    return msg
 
 
-async def _handle_task_date_response(channel: discord.TextChannel, content: str) -> None:
-    pending = _pending_task_dates[channel.id]
-    skip_words = {"あとで", "まだ", "決めてない", "未定", "わからない", "skip", "なし", "パス", "後で"}
-    if any(w in content for w in skip_words):
+async def _handle_event_confirmation(channel: discord.TextChannel, content: str) -> str | None:
+    """確認待ちへの返事なら処理して送った文面を返す。返事ではない（別の話題・別の依頼）なら None。"""
+    pending = _live_pending_events(channel.id)
+    if not pending:
+        return None
+
+    reply = _norm_reply(content)
+
+    if reply in _CONFIRM_REPLIES:
+        del _pending_events[channel.id]
+        texts = [await _execute_event_registration(channel, p) for p in pending]
+        return "\n".join(texts)
+
+    if reply in _CANCEL_REPLIES:
+        del _pending_events[channel.id]
+        msg = "わかった！キャンセルしたよ！また教えてね！"
+        await channel.send(msg)
+        return msg
+
+    # 時刻の修正は、対象が1件に決まるときだけ受け付ける（複数あるとどれの修正か分からない）
+    if len(pending) == 1 and _looks_like_datetime_reply(content):
+        p = pending[0]
+        try:
+            new_dt = await claude_service.parse_datetime_natural(content, datetime.now(_TZ), base_dt=p["start_dt"])
+        except Exception:
+            msg = "うーん、うまく読み取れなかった…\n「OK」で確定、「キャンセル」でやめられるよ！"
+            await channel.send(msg)
+            return msg
+        duration = p["end_dt"] - p["start_dt"]
+        p["start_dt"], p["end_dt"], p["created"] = new_dt, new_dt + duration, time.monotonic()
+        msg = f"📅 {_fmt_event_range(p)} に修正したよ！\nこれでOK？「OK」で確定！"
+        await channel.send(msg)
+        return msg
+
+    return None
+
+
+async def _handle_task_date_response(channel: discord.TextChannel, content: str) -> str | None:
+    """「いつやる予定？」への返事なら処理して送った文面を返す。返事ではないなら質問を取り下げて None。"""
+    pending = _pending_task_dates.get(channel.id)
+    if not pending:
+        return None
+
+    if _norm_reply(content) in _SKIP_DATE_REPLIES:
         del _pending_task_dates[channel.id]
-        await channel.send("わかった！日付なしで登録しておくね！")
-        return
+        msg = "わかった！日付なしで登録しておくね！"
+        await channel.send(msg)
+        return msg
 
-    now_jst = datetime.now(_TZ)
+    if not _looks_like_datetime_reply(content):
+        # 日時の返事ではない = 話題が変わった。ToDo は日付なしのまま、通常の会話として扱う
+        del _pending_task_dates[channel.id]
+        return None
+
     try:
-        dt = await claude_service.parse_datetime_natural(content, now_jst)
+        dt = await claude_service.parse_datetime_natural(content, datetime.now(_TZ))
         await asyncio.to_thread(google_tasks_service.update_task_due, pending["task_id"], dt.isoformat())
-        del _pending_task_dates[channel.id]
-        weekday = _WEEKDAY_NAMES[dt.weekday()]
-        await channel.send(
-            f"📅 「{pending['title']}」を {dt.month}/{dt.day}（{weekday}）{dt.strftime('%H:%M')} にやる予定で設定したよ！"
-        )
     except Exception:
-        await channel.send(
+        msg = (
             "うーん、日時をうまく読み取れなかった…\n"
             "「明日15時」「来週月曜の午前中」みたいに教えてくれると嬉しいな！\n"
             "「あとで」と言えば日付なしのままにできるよ！"
         )
+        await channel.send(msg)
+        return msg
+
+    del _pending_task_dates[channel.id]
+    weekday = _WEEKDAY_NAMES[dt.weekday()]
+    msg = f"📅 「{pending['title']}」を {dt.month}/{dt.day}（{weekday}）{dt.strftime('%H:%M')} にやる予定で設定したよ！"
+    await channel.send(msg)
+    return msg
 
 
-async def _execute_event_registration(
-    channel: discord.TextChannel, title: str, start_dt: datetime, end_dt: datetime
-) -> None:
-    weekday = _WEEKDAY_NAMES[start_dt.weekday()]
+async def _execute_event_registration(channel: discord.TextChannel, p: dict) -> str:
+    """Google Calendar（+ Notion）に登録し、送った文面を返す。"""
     try:
-        gcal = await asyncio.to_thread(calendar_service.create_event, title, start_dt, end_dt)
-        await channel.send(
-            f"✅ 登録したよ！\n"
-            f"📅 **{title}** — {start_dt.strftime('%m/%d')}（{weekday}）{start_dt.strftime('%H:%M')}\n"
-            f"{gcal.get('link', '')}"
-        )
+        gcal = await asyncio.to_thread(calendar_service.create_event, p["title"], p["start_dt"], p["end_dt"])
+        msg = f"✅ 登録したよ！\n📅 **{p['title']}** — {_fmt_event_range(p)}\n{gcal.get('link', '')}"
     except Exception as e:
-        await channel.send(f"⚠️ Google Calendar登録エラー: {e}")
+        msg = f"⚠️ Google Calendar登録エラー（{p['title']}）: {e}"
+    await channel.send(msg)
 
     try:
-        await asyncio.to_thread(notion_service.create_event, title, start_dt.date().isoformat())
+        await asyncio.to_thread(notion_service.create_event, p["title"], p["start_dt"].date().isoformat())
     except Exception:
         pass
+    return msg
 
 
 # ---------------------------------------------------------------------------

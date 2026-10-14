@@ -137,7 +137,10 @@ TOOLS = [
         "description": (
             "Googleカレンダーに新しい予定を登録する。"
             "「〜を予定に入れて」「〜の予定を登録して」と明示されたときのみ使う。"
-            "予定の確認・表示はlist_eventsを使う。"
+            "予定の確認・表示はlist_eventsを使う。\n"
+            "このツールはユーザーに確認メッセージを出すだけで、ユーザーが「OK」と返すまで登録されない"
+            "（確認メッセージはツール側で送るので、あなたが状況を説明し直す必要はない）。"
+            "確認待ちの予定と同じタイトルで呼ぶと、その予定の日時の修正として置き換わる。"
         ),
         "input_schema": {
             "type": "object",
@@ -148,6 +151,13 @@ TOOLS = [
                     "description": (
                         "予定開始日時 ISO8601形式 JST（例: 2026-05-22T15:00:00+09:00）。"
                         "時刻未指定なら09:00とする。"
+                    ),
+                },
+                "end_iso": {
+                    "type": "string",
+                    "description": (
+                        "予定終了日時 ISO8601形式 JST。メール等に終了時刻や所要時間があれば必ず設定する"
+                        "（例: 「16:05～17:00」なら17:00）。わからなければ省略（開始から1時間になる）。"
                     ),
                 },
             },
@@ -578,12 +588,22 @@ async def chat(user_message: str, conversation_history: list[dict] | None = None
 _datetime_cache: dict[tuple, str] = {}
 
 
-async def parse_datetime_natural(date_expr: str, now_jst: datetime) -> datetime:
-    cache_key = (date_expr.strip(), now_jst.strftime("%Y-%m-%d"))
+async def parse_datetime_natural(date_expr: str, now_jst: datetime, base_dt: datetime | None = None) -> datetime:
+    """自然言語の日時表現を解釈する。base_dt は修正対象の予定の日時で、
+    「17時に変えて」のように片方しか言われなかったとき、もう片方を引き継ぐのに使う。"""
+    cache_key = (date_expr.strip(), now_jst.strftime("%Y-%m-%d"), base_dt.isoformat() if base_dt else None)
     if cache_key in _datetime_cache:
         return datetime.fromisoformat(_datetime_cache[cache_key])
 
     now_weekday = _WEEKDAYS[now_jst.weekday()]
+    base_rule = ""
+    if base_dt is not None:
+        base_rule = (
+            f"\n## 修正対象の予定（基準日時）: {base_dt.strftime('%Y年%m月%d日')}"
+            f"（{_WEEKDAYS[base_dt.weekday()]}曜日）{base_dt.strftime('%H:%M')}\n"
+            "- 時刻だけ指定された場合（「17時に変えて」等）は、日付は基準日時の日付のままにする\n"
+            "- 日付だけ指定された場合（「28日にして」等）は、時刻は基準日時の時刻のままにする（09:00にしない）\n"
+        )
 
     prompt = f"""以下の日時表現を解釈して、正確な日時をJSON形式で返してください（他のテキスト不要）。
 
@@ -598,7 +618,7 @@ async def parse_datetime_natural(date_expr: str, now_jst: datetime) -> datetime:
 - 「明日」「明後日」= 現在日付からの相対日
 - 「〇時」= その時刻のJST。時刻未指定の場合は 09:00
 - タイムゾーンは常にJST（+09:00）
-
+{base_rule}
 {{"datetime": "YYYY-MM-DDTHH:MM:SS+09:00"}}"""
 
     response = await _create_with_retry(
